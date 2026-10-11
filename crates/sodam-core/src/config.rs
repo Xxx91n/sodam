@@ -26,9 +26,15 @@ pub struct Settings {
 }
 
 /// 项目自建的签名服务（sodahub-org 部署）：开箱即用，可在设置里改成别的实例。
-pub const DEFAULT_SIGNER_URL: &str = "http://222.186.10.201:8921/sign";
+pub const DEFAULT_SIGNER_URL: &str = "http://103.236.75.83:8899/sign";
 /// 上面那台服务的 token（等同取流能力，别外传；换服务时在设置里替换）。
-pub const DEFAULT_SIGNER_TOKEN: &str = "05f8089b8c5f60c63f2a6dcfe1028d28ee2725a504f3e59b";
+pub const DEFAULT_SIGNER_TOKEN: &str = "b356ad402bc31ee9e5a99cfdbf41eaa39961a562251c3359";
+
+/// 换服务前的那台内置实例，2026-10 起已下线。
+/// 老版本的默认值会落进 config.json，所以读取时要把它们迁到当前默认值，
+/// 否则老用户会一直指着一台死掉的服务。
+const LEGACY_SIGNER_URL: &str = "http://222.186.10.201:8921/sign";
+const LEGACY_SIGNER_TOKEN: &str = "05f8089b8c5f60c63f2a6dcfe1028d28ee2725a504f3e59b";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -61,10 +67,35 @@ impl Settings {
     }
 
     pub fn load_from(path: &Path) -> Self {
-        std::fs::read_to_string(path)
+        let Some(settings) = std::fs::read_to_string(path)
             .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+            .and_then(|text| serde_json::from_str::<Self>(&text).ok())
+        else {
+            return Self::default();
+        };
+        let (settings, migrated) = settings.migrated();
+        // 迁移后立刻落盘：用户下次打开配置文件看到的、以及设置页显示的，都是真正生效的那份。
+        // 写失败不影响启动，内存里的值已经是迁移后的。
+        if migrated {
+            let _ = settings.save_to(path);
+        }
+        settings
+    }
+
+    /// 把老版本的默认端点迁到当前默认值。
+    ///
+    /// 只认「等于旧默认值」这一种情况，用户填过别的地址就原样保留；
+    /// token 同理，避免覆盖用户自己给别的实例配的 token。
+    /// 返回是否发生了改动。
+    fn migrated(mut self) -> (Self, bool) {
+        if self.signer_url.trim() != LEGACY_SIGNER_URL {
+            return (self, false);
+        }
+        self.signer_url = DEFAULT_SIGNER_URL.to_string();
+        if self.signer_token.trim() == LEGACY_SIGNER_TOKEN {
+            self.signer_token = DEFAULT_SIGNER_TOKEN.to_string();
+        }
+        (self, true)
     }
 
     /// 写配置（自动建目录）。
@@ -132,6 +163,65 @@ mod tests {
         assert!(loaded.language.is_empty());
         assert!(loaded.is_ready_for_vip());
         assert!(!Settings::default().is_ready_for_vip());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 老版本把旧默认地址写进了 config.json，读取时要自动换成当前默认值并落盘。
+    #[test]
+    fn migrates_legacy_default_signer() {
+        let dir = std::env::temp_dir().join(format!("sodam-cfg-legacy-{}", std::process::id()));
+        let path = dir.join("config.json");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"signer_url":"{LEGACY_SIGNER_URL}","signer_token":"{LEGACY_SIGNER_TOKEN}","cookie":"sessionid_ss=x","quality":"lossless"}}"#
+            ),
+        )
+        .expect("write");
+
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.signer_url, DEFAULT_SIGNER_URL);
+        assert_eq!(loaded.signer_token, DEFAULT_SIGNER_TOKEN);
+        // 迁移不碰其它字段
+        assert_eq!(loaded.cookie, "sessionid_ss=x");
+        assert_eq!(loaded.quality, "lossless");
+
+        // 迁移结果要落盘，否则用户看到的配置文件仍是死地址
+        let text = std::fs::read_to_string(&path).expect("read back");
+        assert!(text.contains(DEFAULT_SIGNER_URL));
+        assert!(!text.contains("222.186.10.201"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 用户自己填的实例原样保留；旧地址配自定义 token 时只换地址，不动 token。
+    #[test]
+    fn keeps_user_supplied_signer() {
+        let dir = std::env::temp_dir().join(format!("sodam-cfg-custom-{}", std::process::id()));
+        let path = dir.join("config.json");
+
+        let custom = Settings {
+            signer_url: "http://signer.example.com:8899/sign".into(),
+            signer_token: "my-own-token".into(),
+            ..Default::default()
+        };
+        custom.save_to(&path).expect("save");
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.signer_url, custom.signer_url);
+        assert_eq!(loaded.signer_token, custom.signer_token);
+
+        // 旧地址 + 自定义 token：地址迁移，token 保留
+        let mixed = Settings {
+            signer_url: LEGACY_SIGNER_URL.into(),
+            signer_token: "my-own-token".into(),
+            ..Default::default()
+        };
+        mixed.save_to(&path).expect("save");
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.signer_url, DEFAULT_SIGNER_URL);
+        assert_eq!(loaded.signer_token, "my-own-token");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

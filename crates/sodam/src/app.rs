@@ -342,6 +342,8 @@ pub struct Root {
     /// 绝不在 render 里发网络请求（否则主线程会被下载卡住）。
     pub covers: Arc<HashMap<String, PathBuf>>,
     pub original_covers: HashMap<String, PathBuf>,
+    /// 封面图片缓存：有上界，淘汰时把图从 gpui 的图集里释放（不设这个就会无界增长）。
+    pub cover_cache: gpui::Entity<ui::cover_cache::CoverImageCache>,
     pub original_cover_attempted: Arc<Mutex<HashSet<String>>>,
     pub ambient_colors: HashMap<String, (u8, u8, u8)>,
     pub(crate) cover_pool: CoverPool,
@@ -510,6 +512,7 @@ impl Root {
             cover_attempted: Arc::new(Mutex::new(HashSet::new())),
             cover_requests: Arc::new(Mutex::new(Vec::new())),
             covers: Arc::new(HashMap::new()),
+            cover_cache: ui::cover_cache::CoverImageCache::new(cx),
             original_covers: HashMap::new(),
             original_cover_attempted: Arc::new(Mutex::new(HashSet::new())),
             ambient_colors: HashMap::new(),
@@ -985,6 +988,10 @@ impl Render for Root {
                 eprintln!("[frame] {elapsed}ms nav={:?} rows={rows}", self.nav);
             }
         }
-        element
+        // 给整棵子树挂上有上界的封面图片缓存：超预算的封面会被释放，
+        // 不挂的话每张见过的封面都会永远留在显存里（见 ui/cover_cache.rs）。
+        gpui::image_cache(self.cover_cache.clone())
+            .size_full()
+            .child(element)
     }
 }

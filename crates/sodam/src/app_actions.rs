@@ -541,6 +541,20 @@ impl Root {
         cx.notify();
     }
 
+    /// 主题恢复为跟随系统：清空配置里的 theme（空串 = auto），渲染时按窗口外观取值。
+    pub fn set_ui_theme_system(&mut self, cx: &mut Context<Self>) {
+        self.theme_follows_system = true;
+        self.theme = theme::theme_from_appearance(cx.window_appearance());
+        self.settings.theme = String::new();
+        let save_result = self.settings.save();
+        theme::set_theme(self.theme);
+        self.status = match save_result {
+            Ok(()) => self.tr("主题已恢复为跟随系统").to_string(),
+            Err(err) => self.localized("已切换为跟随系统，但保存失败：{err}", &[err.to_string()]),
+        };
+        cx.notify();
+    }
+
     /// 用系统默认应用打开配置文件（macOS `open` / Windows `start` / Linux `xdg-open`）。
     pub fn open_config_file(&mut self, cx: &mut Context<Self>) {
         let path = Settings::config_path();

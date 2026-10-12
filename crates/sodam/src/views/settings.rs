@@ -196,16 +196,33 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
     let vip = root.account.as_ref().map(|info| info.vip).unwrap_or(false);
 
     let theme_rows: Vec<AnyElement> = [
-        (ThemeKind::Dark, root.tr("深色")),
-        (ThemeKind::Light, root.tr("浅色")),
+        (None, root.tr("跟随系统")),
+        (Some(ThemeKind::Dark), root.tr("深色")),
+        (Some(ThemeKind::Light), root.tr("浅色")),
     ]
     .into_iter()
     .map(|(value, title)| {
-        let chosen = root.theme == value;
+        // `None` = 跟随系统；`Some(kind)` = 固定主题。
+        let chosen = match value {
+            None => root.theme_follows_system,
+            Some(kind) => !root.theme_follows_system && root.theme == kind,
+        };
+        let id = match value {
+            None => "theme-set-system".to_string(),
+            Some(kind) => format!("theme-set-{}", kind.key()),
+        };
+        // 跟随系统的色块用黑白对角渐变，直观表示「深色/浅色都由系统定」。
+        let swatch: gpui::Background = match value {
+            None => gpui::linear_gradient(
+                135.0,
+                gpui::linear_color_stop(theme::hex(0x0A0A0A), 0.0),
+                gpui::linear_color_stop(theme::hex(0xFFFFFF), 1.0),
+            ),
+            Some(ThemeKind::Light) => theme::hex(0xFFFFFF).into(),
+            Some(ThemeKind::Dark) => theme::hex(0x0A0A0A).into(),
+        };
         div()
-            .id(gpui::ElementId::Name(
-                format!("theme-set-{}", value.key()).into(),
-            ))
+            .id(gpui::ElementId::Name(id.into()))
             .flex()
             .flex_row()
             .items_center()
@@ -217,9 +234,12 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
             .cursor_pointer()
             .when(chosen, |this| this.bg(theme::surface_selected()))
             .hover(|style| style.bg(theme::surface_hover()))
-            .on_click(cx.listener(move |root, _event: &ClickEvent, _window, cx| {
-                root.set_ui_theme(value, cx);
-            }))
+            .on_click(
+                cx.listener(move |root, _event: &ClickEvent, _window, cx| match value {
+                    None => root.set_ui_theme_system(cx),
+                    Some(kind) => root.set_ui_theme(kind, cx),
+                }),
+            )
             .child(
                 div()
                     .flex()
@@ -232,11 +252,7 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                             .rounded(px(theme::radius::PILL))
                             .border_1()
                             .border_color(theme::border())
-                            .bg(if value == ThemeKind::Light {
-                                theme::hex(0xFFFFFF)
-                            } else {
-                                theme::hex(0x0A0A0A)
-                            }),
+                            .bg(swatch),
                     )
                     .child(
                         div()

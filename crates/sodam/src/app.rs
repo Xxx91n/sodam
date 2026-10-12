@@ -838,6 +838,9 @@ impl Root {
                 }
             }
         };
+        // macOS 菜单栏的标题也要跟着换语言。
+        #[cfg(target_os = "macos")]
+        crate::menus::refresh(cx, language);
         cx.notify();
     }
 }

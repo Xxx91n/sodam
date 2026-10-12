@@ -422,6 +422,9 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                                     } else {
                                         "Language restored to system".to_string()
                                     };
+                                    // macOS 菜单栏的标题也要跟着换语言。
+                                    #[cfg(target_os = "macos")]
+                                    crate::menus::refresh(cx, root.language);
                                 }
                                 language => root.set_language(language, cx),
                             }

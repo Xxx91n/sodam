@@ -9,6 +9,9 @@ mod app;
 mod tray;
 mod ui;
 mod views;
+// macOS 菜单栏与标准快捷键（⌘Q/⌘M/⌘W），见 menus.rs。
+#[cfg(target_os = "macos")]
+mod menus;
 
 use gpui::{
     px, size, App, AppContext as _, Bounds, Entity, TitlebarOptions, WindowBounds, WindowOptions,
@@ -123,6 +126,12 @@ fn main() {
         .run(|cx: &mut App| {
             #[allow(clippy::redundant_closure)]
             let app = cx.new(|cx| app::Root::new(cx));
+            // macOS：装好菜单栏与 ⌘Q/⌘M/⌘W（菜单标题跟随当前语言）。
+            #[cfg(target_os = "macos")]
+            {
+                let language = app.read(cx).language;
+                menus::install(cx, language);
+            }
             let options = main_window_options(cx);
             cx.open_window(options, |_window, _cx| app.clone())
                 .expect("打开主窗口失败");

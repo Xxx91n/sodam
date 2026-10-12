@@ -15,7 +15,7 @@ use sodam_core::{
     },
     queue::Queue,
     session::{AccountInfo, Session},
-    PlaybackEngine, Settings,
+    PlayReporter, PlaybackEngine, Settings,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -353,6 +353,8 @@ pub struct Root {
     pub account: Option<AccountInfo>,
     /// 音频播放引擎（rodio，跑在专属线程上）
     pub engine: PlaybackEngine,
+    /// 播放进度 / 时长上报（喂引擎快照，内部异步发请求）。
+    pub play_reporter: PlayReporter,
 }
 
 impl Root {
@@ -390,6 +392,7 @@ impl Root {
         let queue = Queue::new(Vec::<TrackItem>::new());
 
         let logged_in = !settings.cookie.trim().is_empty();
+        let play_reporter = PlayReporter::new(settings.clone());
         let mut root = Self {
             // 未登录只能待在设置页（登录入口在设置 → 账户）
             nav: if logged_in {
@@ -520,6 +523,7 @@ impl Root {
             login: LoginState::Idle,
             account: None,
             engine: PlaybackEngine::new(),
+            play_reporter,
         };
         if logged_in {
             root.refresh_account(cx);

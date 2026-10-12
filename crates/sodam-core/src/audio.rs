@@ -87,8 +87,14 @@ impl Default for PlaybackEngine {
 impl PlaybackEngine {
     pub fn new() -> Self {
         let (tx, rx) = channel();
+        // 测试 / 无人值守挂机：`SODAM_VOLUME=0` 可让实例起来就是静音。
+        let initial_volume = std::env::var("SODAM_VOLUME")
+            .ok()
+            .and_then(|value| value.trim().parse::<f32>().ok())
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0);
         let snapshot = Arc::new(Mutex::new(PlaybackSnapshot {
-            volume: 1.0,
+            volume: initial_volume,
             ..Default::default()
         }));
         let state = snapshot.clone();

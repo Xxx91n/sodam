@@ -171,6 +171,8 @@ impl Root {
                 .await;
             let _ = this.update(cx, |root, cx| {
                 let snap = root.engine.snapshot();
+                // 播放进度 / 时长上报：喂一拍快照（内部异步发请求，不阻塞）
+                root.play_reporter.observe(&snap);
                 // 加载完成：引擎已切到 pending 曲目 → 清 loading 态
                 if let Some(pending) = &root.pending_track {
                     if snap.track_id == pending.id {
@@ -471,6 +473,7 @@ impl Root {
                             root.ensure_covers(std::slice::from_ref(&info.avatar_url.clone()), cx);
                         }
                         root.account = Some(info.clone());
+                        root.play_reporter.set_user_id(info.user_id.clone());
                         root.login = LoginState::LoggedIn(info.clone());
                         // 账号请求成功说明网络就绪；若收藏 ids 此前拉取失败，自动重试。
                         if root.liked_ids_failed {
@@ -1998,6 +2001,7 @@ impl Root {
     /// 设置页保存后调用：落盘并重建会话。
     #[allow(dead_code)] // 设置表单（roadmap 第 3 项）接入后由保存按钮调用
     pub fn apply_settings(&mut self, settings: Settings) {
+        let reporter_settings = settings.clone();
         match self
             .session
             .as_mut()
@@ -2013,6 +2017,7 @@ impl Root {
                 self.session = Some(Session::new(self.settings.clone()));
             }
         }
+        self.play_reporter.apply_settings(reporter_settings);
     }
 }
 

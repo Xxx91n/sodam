@@ -199,6 +199,13 @@ impl PlayReporter {
         let identity = self.identity.clone();
         spawn(settings, move |soda| {
             let effective = effective_identity(soda, &identity);
+            // 写「最近播放」：手机 / 其它端的历史播放读的就是这条
+            // （`append_recently_played_media`，与埋点/播放计数是不同接口）。
+            log_report(
+                "recent",
+                &media.id,
+                &describe(soda.append_recently_played_media(std::slice::from_ref(&media))),
+            );
             log_report(
                 "start",
                 &media.id,

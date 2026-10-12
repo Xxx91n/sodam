@@ -218,6 +218,18 @@ pub struct Root {
     lyrics_request_seq: u64,
     pub search_input: String,
     pub search_focus: FocusHandle,
+    /// 窗口根元素的焦点。
+    ///
+    /// 必须有：gpui 的上下文栈取自「聚焦节点到根的路径」，没有聚焦元素时栈是空的，
+    /// 带上下文谓词的快捷键绑定（播放三键绑在 `workspace && !input` 上）永远不会匹配。
+    /// 所以根元素自己持焦点，点搜索框等元素时焦点自然让出去。
+    pub workspace_focus: FocusHandle,
+    /// 设置页里的快捷键卡片：录制新组合键时持有焦点，并让播放绑定让路。
+    pub shortcut_focus: FocusHandle,
+    /// 正在录制的动作（None = 没在录制）。
+    pub shortcut_capture: Option<crate::shortcuts::Slot>,
+    /// 快捷键配置有改动，需要重新注册 keymap（由 main 的托盘循环统一应用）。
+    pub shortcuts_dirty: bool,
     /// 搜索结果与加载状态。
     pub results: Arc<Vec<TrackItem>>,
     pub search_results: SearchResults,
@@ -420,6 +432,10 @@ impl Root {
             lyrics_request_seq: 0,
             search_input: String::new(),
             search_focus: cx.focus_handle(),
+            workspace_focus: cx.focus_handle(),
+            shortcut_focus: cx.focus_handle(),
+            shortcut_capture: None,
+            shortcuts_dirty: false,
             results: Arc::new(Vec::new()),
             search_results: SearchResults::default(),
             search_tab: SearchScope::All,
@@ -847,6 +863,11 @@ impl Root {
 
 impl Render for Root {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 没有元素聚焦时把焦点收回根元素：gpui 的上下文栈取自聚焦节点的路径，
+        // 空栈会让带谓词的快捷键绑定（播放三键）全部失效。
+        if window.focused(cx).is_none() {
+            window.focus(&self.workspace_focus, cx);
+        }
         // 开发期帧耗时探针（`SODAM_FRAME_LOG=1`）：渲染超过 16ms 就打一行。
         // 排查「UI 卡死」先看这里，而不是靠感觉。
         let frame_started = std::time::Instant::now();
@@ -888,6 +909,9 @@ impl Render for Root {
             .flex()
             .flex_col()
             .size_full()
+            // 根元素持焦点 + 挂基础上下文：带谓词的快捷键绑定要有非空上下文栈才生效。
+            .track_focus(&self.workspace_focus)
+            .key_context(crate::shortcuts::BASE_CONTEXT)
             // macOS 隐藏系统标题栏，顶部留出红绿灯的高度；
             // Windows 隐藏系统标题栏后由应用自绘拖拽区与控制按钮。
             .when(cfg!(target_os = "macos"), |this| this.pt(px(28.0)))

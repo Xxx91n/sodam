@@ -9,6 +9,8 @@ mod app;
 mod tray;
 mod ui;
 mod views;
+// 播放控制快捷键（可重绑），见 shortcuts.rs。
+mod shortcuts;
 // macOS 菜单栏与标准快捷键（⌘Q/⌘M/⌘W），见 menus.rs。
 #[cfg(target_os = "macos")]
 mod menus;
@@ -75,6 +77,19 @@ fn start_tray_service(
                 };
             }
 
+            // 设置页重绑快捷键后置位，这里重新注册（清空 + 重建 keymap，见 shortcuts::apply）。
+            let settings_changed = cx.update(|cx| {
+                app.update(cx, |root, _cx| {
+                    let dirty = root.shortcuts_dirty;
+                    root.shortcuts_dirty = false;
+                    dirty
+                })
+            });
+            if settings_changed {
+                let settings = cx.update(|cx| app.read(cx).settings.clone());
+                cx.update(|cx| shortcuts::apply(cx, &settings));
+            }
+
             tick += 1;
             if tick % 5 == 0 {
                 cx.update(|cx| {
@@ -132,6 +147,9 @@ fn main() {
                 let language = app.read(cx).language;
                 menus::install(cx, language);
             }
+            // 播放快捷键：应用内三键（可在设置页重绑）。
+            let settings = app.read(cx).settings.clone();
+            shortcuts::install(cx, &settings, app.clone());
             let options = main_window_options(cx);
             cx.open_window(options, |_window, _cx| app.clone())
                 .expect("打开主窗口失败");

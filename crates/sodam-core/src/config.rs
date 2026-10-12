@@ -23,6 +23,42 @@ pub struct Settings {
     pub theme: String,
     /// 界面语言：`zh` / `en`；空或 `auto` = 跟随系统语言。
     pub language: String,
+    /// 播放/暂停快捷键（gpui 的 keystroke 写法，如 `space`、`ctrl-left`）。
+    /// 空串 = 用内置默认值 `DEFAULT_SHORTCUT_*`。
+    pub shortcut_toggle: String,
+    /// 上一首。
+    pub shortcut_previous: String,
+    /// 下一首。
+    pub shortcut_next: String,
+}
+
+/// 播放控制快捷键的内置默认值。
+///
+/// 播放/暂停三平台都用 `Space`；上一首/下一首按平台分开：
+/// * macOS 用 `⌘←` / `⌘→`（Apple Music 就是这两个键）。**不能用 `⌃←`/`⌃→`**：
+///   那是系统「切换桌面（Move left/right a space）」的默认快捷键，真键盘按下去
+///   会被系统先吃掉，应用根本收不到（`com.apple.symbolichotkeys` 里的 key 79/81）。
+/// * Windows / Linux 用 `Ctrl+←` / `Ctrl+→`（浏览器与播放器的通行做法，系统没占用）。
+///
+/// 播放操作绑在 `!input` 上下文上，所以在文本框里 `⌘←` 仍是「行首」，不受影响。
+pub const DEFAULT_SHORTCUT_TOGGLE: &str = "space";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_SHORTCUT_PREVIOUS: &str = "cmd-left";
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_SHORTCUT_PREVIOUS: &str = "ctrl-left";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_SHORTCUT_NEXT: &str = "cmd-right";
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_SHORTCUT_NEXT: &str = "ctrl-right";
+
+/// 配置为空（或只有空白）时回退到内置默认值。
+fn effective_shortcut<'a>(value: &'a str, default: &'a str) -> &'a str {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        default
+    } else {
+        trimmed
+    }
 }
 
 /// 项目自建的签名服务（sodahub-org 部署）：开箱即用，可在设置里改成别的实例。
@@ -49,6 +85,9 @@ impl Default for Settings {
             quality: String::new(),
             theme: String::new(),
             language: String::new(),
+            shortcut_toggle: String::new(),
+            shortcut_previous: String::new(),
+            shortcut_next: String::new(),
         }
     }
 }
@@ -114,6 +153,21 @@ impl Settings {
     /// 是否已经具备"能放 VIP 整曲"的条件（cookie + 签名服务）。
     pub fn is_ready_for_vip(&self) -> bool {
         !self.cookie.trim().is_empty() && !self.signer_url.trim().is_empty()
+    }
+
+    /// 生效的播放/暂停快捷键（配置为空时用内置默认值）。
+    pub fn shortcut_toggle(&self) -> &str {
+        effective_shortcut(&self.shortcut_toggle, DEFAULT_SHORTCUT_TOGGLE)
+    }
+
+    /// 生效的上一首快捷键。
+    pub fn shortcut_previous(&self) -> &str {
+        effective_shortcut(&self.shortcut_previous, DEFAULT_SHORTCUT_PREVIOUS)
+    }
+
+    /// 生效的下一首快捷键。
+    pub fn shortcut_next(&self) -> &str {
+        effective_shortcut(&self.shortcut_next, DEFAULT_SHORTCUT_NEXT)
     }
 
     /// 用环境变量补全空字段（`SODA_COOKIE` / `QISHUI_SIGNER_URL` / `QISHUI_SIGNER_TOKEN`…），
@@ -223,5 +277,28 @@ mod tests {
         assert_eq!(loaded.signer_token, "my-own-token");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 快捷键：默认值、空串回退、老配置缺字段也能读。
+    #[test]
+    fn shortcut_defaults_and_fallback() {
+        let settings = Settings::default();
+        assert_eq!(settings.shortcut_toggle(), DEFAULT_SHORTCUT_TOGGLE);
+        assert_eq!(settings.shortcut_previous(), DEFAULT_SHORTCUT_PREVIOUS);
+        assert_eq!(settings.shortcut_next(), DEFAULT_SHORTCUT_NEXT);
+
+        let custom = Settings {
+            shortcut_toggle: "alt-k".into(),
+            // 只有空白也算未设置
+            shortcut_previous: "   ".into(),
+            ..Default::default()
+        };
+        assert_eq!(custom.shortcut_toggle(), "alt-k");
+        assert_eq!(custom.shortcut_previous(), DEFAULT_SHORTCUT_PREVIOUS);
+
+        // 老配置文件里没有这三个字段
+        let parsed: Settings = serde_json::from_str(r#"{"cookie":"x"}"#).expect("老配置应能解析");
+        assert_eq!(parsed.shortcut_next(), DEFAULT_SHORTCUT_NEXT);
+        assert!(parsed.shortcut_toggle.is_empty());
     }
 }

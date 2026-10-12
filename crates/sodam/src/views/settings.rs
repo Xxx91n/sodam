@@ -484,6 +484,7 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                 .gap(px(theme::space::XS))
                 .children(rows),
         )
+        .child(super::shortcut_card::section(root, cx))
         .child({
             // 缓存：显示占用大小 + 一键清理（统计读后台快照，不在渲染路径扫盘）
             let (audio_bytes, audio_files, cover_bytes, cover_files) = root.cache_summary;

@@ -149,6 +149,20 @@ impl Language {
             "窗口" => "Window",
             "最小化" => "Minimize",
             "关闭窗口" => "Close Window",
+            "快捷键" => "Shortcuts",
+            "播放 / 暂停" => "Play / Pause",
+            "重绑" => "Rebind",
+            "恢复默认" => "Reset",
+            "取消" => "Cancel",
+            "按下新的组合键…（Esc 取消）" => "Press a new shortcut… (Esc to cancel)",
+            "播放控制：系统媒体键同样可用；这里绑的是应用内快捷键" => {
+                "Playback: system media keys work too; these bind in-app shortcuts"
+            }
+            "播放控制：系统媒体键同样可用；⌃←/⌃→ 被系统占用（切换桌面），别绑这两个" => {
+                "Playback: system media keys work too; ⌃←/⌃→ are taken by macOS (switch spaces)"
+            }
+            "快捷键已更新" => "Shortcut updated",
+            "快捷键已恢复默认" => "Shortcut reset to default",
             "「{}」共 {} 条结果" => "{}: {} results",
             "读取音乐人失败：{err}" => "Failed to load artist: {err}",
             "加载更多音乐人歌曲失败：{err}" => "Failed to load more artist tracks: {err}",

@@ -22,6 +22,8 @@ fn search_box(root: &Root, window: &Window, cx: &mut Context<Root>) -> impl Into
         .id("search-input")
         .relative()
         .track_focus(&root.search_focus)
+        // 播放快捷键绑在 `!input` 上：这里打字时不能让 Space 之类触发播放动作。
+        .key_context(crate::shortcuts::INPUT_CONTEXT)
         .flex()
         .flex_row()
         .items_center()

@@ -19,6 +19,7 @@ pub mod lyrics;
 pub mod scenes;
 pub mod search;
 pub mod settings;
+pub mod shortcut_card;
 use settings::duration_of;
 
 use sodam_core::library::SearchScope;

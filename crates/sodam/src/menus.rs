@@ -14,14 +14,8 @@ use crate::ui::i18n::Language;
 
 actions!(sodam, [QuitApp, MinimizeWindow, CloseWindow]);
 
-/// 注册快捷键、动作处理器与菜单栏。启动时调用一次。
+/// 注册动作处理器与菜单栏。启动时调用一次。
 pub fn install(cx: &mut App, language: Language) {
-    cx.bind_keys([
-        KeyBinding::new("cmd-q", QuitApp, None),
-        KeyBinding::new("cmd-m", MinimizeWindow, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-    ]);
-
     // 三个动作都走应用级监听器：⌘W 关掉窗口后没有窗口可派发，菜单仍要能退出。
     cx.on_action(|_: &QuitApp, cx: &mut App| cx.quit());
     cx.on_action(|_: &MinimizeWindow, cx: &mut App| {
@@ -32,6 +26,18 @@ pub fn install(cx: &mut App, language: Language) {
     });
 
     refresh(cx, language);
+}
+
+/// macOS 的窗口/应用快捷键绑定。
+///
+/// 单独暴露给 `shortcuts::apply`：重绑播放快捷键时会整表重建 keymap，
+/// 这里必须跟着一起注册，否则 ⌘Q/⌘M/⌘W 会失效。
+pub fn window_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("cmd-q", QuitApp, None),
+        KeyBinding::new("cmd-m", MinimizeWindow, None),
+        KeyBinding::new("cmd-w", CloseWindow, None),
+    ]
 }
 
 /// 按当前语言重建菜单栏。语言切换后调用。

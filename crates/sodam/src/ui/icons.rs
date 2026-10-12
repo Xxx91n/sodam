@@ -131,6 +131,7 @@ icon_set!(
     "minus",
     "square",
     "disc-3",
+    "check",
 );
 
 /// 听歌模式内置图标路径。
@@ -182,6 +183,16 @@ mod tests {
             .expect("brand SVG asset load")
             .expect("brand SVG bytes");
         assert!(bytes.starts_with(b"<?xml"));
+    }
+
+    /// 设置页用 `path("check")` 画选中勾；图标没注册时 svg 会静默不渲染。
+    #[test]
+    fn check_icon_is_registered() {
+        let bytes = Assets
+            .load(&path("check"))
+            .expect("check asset load")
+            .expect("check SVG bytes");
+        assert!(bytes.starts_with(b"<svg"));
     }
 
     #[test]

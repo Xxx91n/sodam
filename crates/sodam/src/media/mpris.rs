@@ -58,7 +58,8 @@ impl Controls {
         Ok(Self { updates, _server })
     }
 
-    pub fn publish(&mut self, now: &NowPlaying) {
+    /// 发布曲目元数据（只在曲目或封面变化时调用）。
+    pub fn publish_metadata(&mut self, now: &NowPlaying) {
         let metadata = if now.has_track() {
             let mut metadata = Metadata::builder()
                 .trackid(track_id(&now.track_id))
@@ -73,7 +74,10 @@ impl Controls {
             Metadata::builder().trackid(TrackId::NO_TRACK).build()
         };
         self.send(Update::Metadata(metadata));
+    }
 
+    /// 发布播放状态与进度（播放/暂停切换、切曲、拖动时调用）。
+    pub fn publish_playback(&mut self, now: &NowPlaying) {
         let status = match (now.has_track(), now.playing) {
             (false, _) => PlaybackStatus::Stopped,
             (true, true) => PlaybackStatus::Playing,

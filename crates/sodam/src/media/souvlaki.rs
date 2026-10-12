@@ -42,7 +42,11 @@ impl Controls {
         Ok(Self { controls })
     }
 
-    pub fn publish(&mut self, now: &NowPlaying) {
+    /// 发布曲目元数据。
+    ///
+    /// macOS 上这一次调用会**整块替换** `nowPlayingInfo`：调用方必须在之后补一次
+    /// `publish_playback`，否则 elapsed time 会一直是空的（进度条不动）。
+    pub fn publish_metadata(&mut self, now: &NowPlaying) {
         let cover_url = now.cover_url();
         let metadata = if now.has_track() {
             MediaMetadata {
@@ -58,7 +62,10 @@ impl Controls {
         if let Err(error) = self.controls.set_metadata(metadata) {
             eprintln!("[media] 发布曲目失败：{error:?}");
         }
+    }
 
+    /// 发布播放状态与进度。
+    pub fn publish_playback(&mut self, now: &NowPlaying) {
         let progress = Some(MediaPosition(duration(now.position_seconds)));
         let playback = match (now.has_track(), now.playing) {
             (false, _) => MediaPlayback::Stopped,

@@ -70,22 +70,34 @@ impl NowPlaying {
             .map(|path| format!("file://{}", path.display()))
     }
 
-    /// 变化检测用的键：同一首、同一状态、同一秒就不重复发布。
-    fn key(&self) -> (String, bool, i64, Option<String>) {
-        (
-            self.track_id.clone(),
-            self.playing,
-            self.position_seconds as i64,
-            self.cover_url(),
-        )
+    /// 元数据的变化键：同一首、同一封面就不重发。
+    ///
+    /// 这条很关键：souvlaki 在 macOS 上每次 `set_metadata` 都会整块替换
+    /// `nowPlayingInfo`（连 elapsed time 和封面一起清掉，封面再异步补），
+    /// 系统那边每次都会当成一个新内容项。之前把进度秒数也算进 key，
+    /// 等于每秒重建一次内容项 —— 封面会闪、进度条会跳回 0。
+    fn metadata_key(&self) -> (String, Option<String>) {
+        (self.track_id.clone(), self.cover_url())
+    }
+
+    /// 播放状态的变化键：同一首、同一播放状态下不重发。
+    /// 进度由系统按播放速率自行插值，只有明显跳转（拖动/切曲）才值得重发。
+    fn playback_key(&self) -> (String, bool) {
+        (self.track_id.clone(), self.playing)
     }
 }
+
+/// 进度与上次发布值差多少才算「跳转」（秒）。系统会自己插值，不需要逐秒同步。
+const POSITION_JUMP_SECONDS: f64 = 2.5;
 
 /// 系统媒体控制句柄。
 struct Media {
     controls: Controls,
     commands: Receiver<Command>,
-    published: Option<(String, bool, i64, Option<String>)>,
+    published_metadata: Option<(String, Option<String>)>,
+    published_playback: Option<(String, bool)>,
+    /// 上次发布出去的进度，用来识别拖动/切曲这种跳转。
+    last_position: f64,
 }
 
 struct Attached {
@@ -113,7 +125,9 @@ pub fn attach(hwnd: Option<*mut c_void>, cx: &mut App) {
         media: RefCell::new(Media {
             controls,
             commands,
-            published: None,
+            published_metadata: None,
+            published_playback: None,
+            last_position: 0.0,
         }),
     });
 }
@@ -126,15 +140,28 @@ pub fn drain_commands(cx: &App) -> Vec<Command> {
 }
 
 /// 把当前播放状态发布给系统；内容没变就不发。
+///
+/// 元数据与播放状态分开判断，理由见 `NowPlaying::metadata_key`：重发元数据在 macOS 上
+/// 等于重建内容项，会把封面和进度一起清掉。元数据重建之后立刻补一次播放状态，
+/// 因为那一下已经把 elapsed time 抹掉了。
 pub fn publish(cx: &App, now: &NowPlaying) {
     let Some(attached) = cx.try_global::<Attached>() else {
         return;
     };
     let mut media = attached.media.borrow_mut();
-    let key = now.key();
-    if media.published.as_ref() == Some(&key) {
-        return;
+
+    let metadata_key = now.metadata_key();
+    if media.published_metadata.as_ref() != Some(&metadata_key) {
+        media.published_metadata = Some(metadata_key);
+        media.published_playback = None;
+        media.controls.publish_metadata(now);
     }
-    media.published = Some(key);
-    media.controls.publish(now);
+
+    let playback_key = now.playback_key();
+    let jumped = (now.position_seconds - media.last_position).abs() > POSITION_JUMP_SECONDS;
+    if media.published_playback.as_ref() != Some(&playback_key) || jumped {
+        media.published_playback = Some(playback_key);
+        media.controls.publish_playback(now);
+    }
+    media.last_position = now.position_seconds;
 }

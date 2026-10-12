@@ -61,6 +61,22 @@ const MAX_WASH_SATURATION: f32 = 0.7;
 const MIN_ACCENT_SATURATION: f32 = 0.6;
 const MAX_ACCENT_SATURATION: f32 = 0.85;
 
+/// 深色主题的底色接近纯黑（HSL 亮度只有 0.04~0.19），只换色相、不抬亮度的话
+/// 彩度空间被 `(1 - |2L - 1|)` 卡死，封面再鲜艳背景也看不出颜色。
+/// 有主色时给这类底色抬一截亮度，色相才有表达空间。
+const AMBIENT_LIFT: f32 = 0.07;
+/// 只抬比这个更暗的底色：文字/次级文字本身够亮，不该被抬。
+const AMBIENT_LIFT_GATE: f32 = 0.25;
+/// 抬升上限，避免把深色主题抬灰。
+const AMBIENT_LIFT_CEIL: f32 = 0.32;
+/// 浅色主题对称的问题：底色接近纯白（亮度 0.83~1.0），同样没有彩度空间。
+/// 有主色时把这类很亮的底色压暗一截。
+const AMBIENT_DROP: f32 = 0.09;
+/// 只压比这个更亮的底色：浅色主题的文字是近黑，不会被压。
+const AMBIENT_DROP_GATE: f32 = 0.75;
+/// 压暗下限，避免把浅色主题压脏。
+const AMBIENT_DROP_FLOOR: f32 = 0.72;
+
 pub fn set_theme(theme: ThemeKind) {
     CURRENT_THEME.store(theme as u8, Ordering::Relaxed);
 }
@@ -152,6 +168,10 @@ fn mix_rgba(from: Rgba, to: Rgba, delta: f32) -> Rgba {
 
 /// sonora 的 wash：保留每个填充色原本的亮度/层级，只把色相换成封面主色，
 /// 并把主色饱和度按强度并入背景。这样主题不会因封面明暗被破坏。
+///
+/// 额外做一步亮度补偿：底色太黑（深色 L≈0.04）或太（浅色 L≈0.98）时，
+/// 彩度空间都被 `(1 - |2L - 1|)` 压到接近 0，只换色相根本显不出来。
+/// 所以有主色时深色把暗底色抬亮、浅色把亮底色压暗（见 `AMBIENT_LIFT*` / `AMBIENT_DROP*`）。
 fn tint(base: Rgba, strength: f32) -> Rgba {
     let Some(ambient) = ambient_color() else {
         return base;
@@ -159,7 +179,21 @@ fn tint(base: Rgba, strength: f32) -> Rgba {
     let (_, base_saturation, base_lightness) = rgba_to_hsl(base);
     let (ambient_hue, ambient_saturation, _) = rgba_to_hsl(ambient);
     let saturation = (base_saturation + ambient_saturation * strength).min(MAX_WASH_SATURATION);
-    hsl_to_rgba(ambient_hue, saturation, base_lightness, base.a)
+    // 近黑/近白的底色都压不出彩度；深色抬亮、浅色压暗，色相才有空间显出来。
+    let lightness = if is_dark() {
+        if base_lightness < AMBIENT_LIFT_GATE {
+            let lift = AMBIENT_LIFT * (0.6 + 0.8 * ambient_saturation);
+            (base_lightness + lift).min(AMBIENT_LIFT_CEIL)
+        } else {
+            base_lightness
+        }
+    } else if base_lightness > AMBIENT_DROP_GATE {
+        let drop = AMBIENT_DROP * (0.6 + 0.8 * ambient_saturation);
+        (base_lightness - drop).max(AMBIENT_DROP_FLOOR)
+    } else {
+        base_lightness
+    };
+    hsl_to_rgba(ambient_hue, saturation, lightness, base.a)
 }
 
 fn tinted_accent(lightness: f32) -> Rgba {

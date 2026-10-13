@@ -199,6 +199,14 @@ impl PlayReporter {
         let identity = self.identity.clone();
         spawn(settings, move |soda| {
             let effective = effective_identity(soda, &identity);
+            log_report(
+                "identity",
+                &media.id,
+                &format!(
+                    "user_id={:?} device_id={:?}",
+                    effective.user_id, effective.device_id
+                ),
+            );
             // 写「最近播放」：手机 / 其它端的历史播放读的就是这条
             // （`append_recently_played_media`，与埋点/播放计数是不同接口）。
             log_report(
@@ -287,10 +295,18 @@ fn effective_identity(soda: &Soda, identity: &ApplogIdentity) -> ApplogIdentity 
     effective
 }
 
-/// 给日志用的上报结果描述（`SODAM_REPORT_LOG=1` 时打印）。
-fn describe<T>(result: libresoda::Result<T>) -> String {
+/// 给日志用的上报结果描述（`SODAM_REPORT_LOG=1` 时打印），带上服务端回包摘要。
+fn describe(result: libresoda::Result<serde_json::Value>) -> String {
     match result {
-        Ok(_) => "ok".to_string(),
+        Ok(value) => {
+            let text = value.to_string();
+            let text: String = if text.chars().count() > 180 {
+                format!("{}…", text.chars().take(180).collect::<String>())
+            } else {
+                text
+            };
+            format!("ok {text}")
+        }
         Err(err) => format!("err {err}"),
     }
 }

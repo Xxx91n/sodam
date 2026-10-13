@@ -1,10 +1,12 @@
 //! 封面组件：统一尺寸、统一圆角，缺图时给同色系占位块。
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use gpui::prelude::*;
-use gpui::{div, img, px, svg, AnyElement, IntoElement, ObjectFit};
+use gpui::{div, img, px, svg, AnyElement, ImageSource, IntoElement, ObjectFit, Resource};
 
+use crate::ui::cover_cache::{sample_edge, CoverImageCache};
 use crate::ui::{icons, theme};
 
 /// 渲染封面。
@@ -14,13 +16,22 @@ use crate::ui::{icons, theme};
 ///   不会出现「有的行有图、有的行塌成一条线」。
 pub fn cover(path: Option<PathBuf>, size: f32, radius: f32) -> AnyElement {
     match path.filter(|path| path.exists()) {
-        Some(path) => img(path)
-            .w(px(size))
-            .h(px(size))
-            .flex_none()
-            .rounded(px(radius))
-            .object_fit(ObjectFit::Cover)
-            .into_any_element(),
+        Some(path) => {
+            // 走自定义图源：缓存会按「显示尺寸」解码，而不是原分辨率。
+            let resource = Resource::from(path);
+            let source = ImageSource::Custom(Arc::new(move |window, cx| {
+                let edge = sample_edge(size, window.scale_factor());
+                let cache = CoverImageCache::entity(cx);
+                cache.update(cx, |cache, cx| cache.load_at(&resource, edge, window, cx))
+            }));
+            img(source)
+                .w(px(size))
+                .h(px(size))
+                .flex_none()
+                .rounded(px(radius))
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        }
         None => div()
             .w(px(size))
             .h(px(size))

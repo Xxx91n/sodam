@@ -334,6 +334,8 @@ pub struct Root {
     pub(crate) last_finished_seq: u64,
     /// 拖动进度条时的预览位置（0.0~1.0）：拖动中只改它，松手才真跳。
     pub progress_preview: Option<f32>,
+    /// 歌词页大封面：切曲后的 `(track_id, 开始时刻)`；管「至少 200ms 加载态」的门。
+    pub lyrics_cover_gate: Option<(String, std::time::Instant)>,
     /// 队列快照（含版本号）：避免抽屉每帧深拷贝整条队列。
     pub queue_cache: (u64, Arc<Vec<TrackItem>>),
     /// 已尝试过的封面 URL（成功在 covers 里，失败的也记下来，避免每帧重复排队）。
@@ -509,6 +511,7 @@ impl Root {
             pending_track: None,
             last_finished_seq: 0,
             progress_preview: None,
+            lyrics_cover_gate: None,
             queue_cache: (0, Arc::new(Vec::new())),
             cover_attempted: Arc::new(Mutex::new(HashSet::new())),
             cover_requests: Arc::new(Mutex::new(Vec::new())),
@@ -907,6 +910,24 @@ impl Render for Root {
                 self.lyrics_scroll
                     .scroll_to_item_strict(index, gpui::ScrollStrategy::Center);
             }
+            // 切曲后强制大封面显示至少 200ms 的加载态（即便图已在缓存里）。
+            if let Some(track) = self.queue.current() {
+                let fresh = self
+                    .lyrics_cover_gate
+                    .as_ref()
+                    .map(|(id, _)| id != &track.id)
+                    .unwrap_or(true);
+                if fresh {
+                    self.lyrics_cover_gate = Some((track.id.clone(), std::time::Instant::now()));
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(220))
+                            .await;
+                        let _ = this.update(cx, |_, cx| cx.notify());
+                    })
+                    .detach();
+                }
+            }
         }
         let element = div()
             .relative()
@@ -916,9 +937,9 @@ impl Render for Root {
             // 根元素持焦点 + 挂基础上下文：带谓词的快捷键绑定要有非空上下文栈才生效。
             .track_focus(&self.workspace_focus)
             .key_context(crate::shortcuts::BASE_CONTEXT)
-            // macOS 隐藏系统标题栏，顶部留出红绿灯的高度；
-            // Windows 隐藏系统标题栏后由应用自绘拖拽区与控制按钮。
-            .when(cfg!(target_os = "macos"), |this| this.pt(px(28.0)))
+            // Windows 隐藏系统标题栏后由应用自绘拖拽区与控制按钮；
+            // macOS 的红绿灯内边距下沉到「侧边栏 / 内容列」，好让两侧背景
+            // 一直铺到窗口顶部，避免标题栏与内容之间出现色差横缝。
             .when(cfg!(target_os = "windows"), |this| {
                 this.child(ui::titlebar::render())
             })
@@ -935,6 +956,8 @@ impl Render for Root {
                         div()
                             .flex_1()
                             .min_w(px(0.0))
+                            // macOS：让红绿灯悬浮在内容之上，内容整体下移 28px。
+                            .when(cfg!(target_os = "macos"), |this| this.pt(px(28.0)))
                             .child(views::render(self, window, cx)),
                     )
                     .when(self.queue_open && self.nav != Nav::Lyrics, |this| {

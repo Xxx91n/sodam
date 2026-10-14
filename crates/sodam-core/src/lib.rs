@@ -7,6 +7,7 @@ pub mod color;
 pub mod config;
 pub mod library;
 pub mod login;
+pub mod mem;
 pub mod models;
 pub mod play_report;
 pub mod queue;

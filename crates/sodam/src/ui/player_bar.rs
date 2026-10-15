@@ -877,6 +877,10 @@ fn queue_drawer_inner(root: &Root, cx: &mut Context<Root>, embedded: bool) -> im
                 .bg(theme::bg())
                 .border_l_1()
                 .border_color(theme::border())
+                // 独立队列面板也铺到顶部，列表头避开 Windows 窗口按钮。
+                .when(cfg!(target_os = "windows"), |this| {
+                    this.pt(px(super::titlebar::STRIP_HEIGHT))
+                })
         })
         .child(
             div()

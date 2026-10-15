@@ -163,9 +163,12 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> impl IntoElement {
         .border_r_1()
         .border_color(theme::border())
         .p(px(theme::space::MD))
-        // macOS：侧边栏底色铺到窗口顶部，内容再让出红绿灯的高度。
+        // 两个平台都让侧边栏底色铺到窗口顶部，只给内容留标题栏高度。
         .when(cfg!(target_os = "macos"), |this| {
             this.pt(px(28.0 + theme::space::MD))
+        })
+        .when(cfg!(target_os = "windows"), |this| {
+            this.pt(px(super::titlebar::STRIP_HEIGHT + theme::space::MD))
         })
         .gap(px(theme::space::XS))
         .child(

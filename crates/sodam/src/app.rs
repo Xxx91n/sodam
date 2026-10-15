@@ -937,12 +937,6 @@ impl Render for Root {
             // 根元素持焦点 + 挂基础上下文：带谓词的快捷键绑定要有非空上下文栈才生效。
             .track_focus(&self.workspace_focus)
             .key_context(crate::shortcuts::BASE_CONTEXT)
-            // Windows 隐藏系统标题栏后由应用自绘拖拽区与控制按钮；
-            // macOS 的红绿灯内边距下沉到「侧边栏 / 内容列」，好让两侧背景
-            // 一直铺到窗口顶部，避免标题栏与内容之间出现色差横缝。
-            .when(cfg!(target_os = "windows"), |this| {
-                this.child(ui::titlebar::render())
-            })
             .bg(theme::ambient_background())
             .text_color(ui::theme::text())
             .child(
@@ -958,6 +952,10 @@ impl Render for Root {
                             .min_w(px(0.0))
                             // macOS：让红绿灯悬浮在内容之上，内容整体下移 28px。
                             .when(cfg!(target_os = "macos"), |this| this.pt(px(28.0)))
+                            // Windows：只下移内容，根背景和侧栏仍铺到标题栏顶部。
+                            .when(cfg!(target_os = "windows"), |this| {
+                                this.pt(px(ui::titlebar::STRIP_HEIGHT))
+                            })
                             .child(views::render(self, window, cx)),
                     )
                     .when(self.queue_open && self.nav != Nav::Lyrics, |this| {
@@ -965,6 +963,11 @@ impl Render for Root {
                     }),
             )
             .child(ui::player_bar::render(self, cx))
+            // 标题栏覆盖在各面板背景之上；不再单独占一行而截断侧栏底色。
+            // 放在普通内容之后、弹层之前，控制按钮可点击，弹层仍能覆盖标题栏。
+            .when(cfg!(target_os = "windows"), |this| {
+                this.child(ui::titlebar::render())
+            })
             .when(self.track_menu.is_some(), |this| {
                 this.child(crate::views::track_menu(self, cx))
             })

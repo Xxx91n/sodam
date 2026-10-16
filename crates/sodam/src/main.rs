@@ -22,8 +22,8 @@ use gpui::{
 };
 use std::sync::Arc;
 
-/// 启动窗口尺寸（参考官方客户端的 16:10 主窗口）。
-const DEFAULT_SIZE: (f32, f32) = (1180.0, 760.0);
+/// 更紧凑的启动窗口尺寸（逻辑像素）；通过 Bounds::centered 在主屏幕居中。
+const DEFAULT_SIZE: (f32, f32) = (980.0, 640.0);
 const MIN_SIZE: (f32, f32) = (900.0, 560.0);
 
 fn main_window_options(cx: &mut App) -> WindowOptions {

@@ -60,6 +60,9 @@ impl PlaybackSnapshot {
     }
 }
 
+type OutputErrors = Arc<Mutex<Option<String>>>;
+type OutputResult = Result<rodio::MixerDeviceSink, rodio::DeviceSinkError>;
+
 enum Command {
     Load {
         track: Box<TrackItem>,
@@ -97,6 +100,14 @@ impl PlaybackEngine {
     }
 
     pub fn with_volume(saved_volume: f32) -> Self {
+        Self::with_output(saved_volume, open_output)
+    }
+
+    // 单测注入故障输出，不触碰硬件/COM；正式运行始终使用上面的真实设备工厂。
+    fn with_output(
+        saved_volume: f32,
+        open_output: impl FnMut(OutputErrors) -> OutputResult + Send + 'static,
+    ) -> Self {
         let (tx, rx) = channel();
         // 显式环境覆盖仍优先（静音开发测试），无覆盖时恢复用户保存的值。
         let initial_volume =
@@ -108,7 +119,7 @@ impl PlaybackEngine {
         let state = snapshot.clone();
         let spawned = std::thread::Builder::new()
             .name("sodam-audio".to_string())
-            .spawn(move || audio_thread(rx, state));
+            .spawn(move || audio_thread(rx, state, open_output));
         if let Err(err) = spawned {
             if let Ok(mut snap) = snapshot.lock() {
                 snap.error = format!("音频线程启动失败：{err}");
@@ -229,9 +240,7 @@ fn sync_progress(state: &Arc<Mutex<PlaybackSnapshot>>, player: &rodio::Player) {
     }
 }
 
-fn open_output(
-    errors: Arc<Mutex<Option<String>>>,
-) -> Result<rodio::MixerDeviceSink, rodio::DeviceSinkError> {
+fn open_output(errors: OutputErrors) -> OutputResult {
     rodio::DeviceSinkBuilder::from_default_device()?
         .with_error_callback(move |err| {
             if let Ok(mut errors) = errors.lock() {
@@ -263,7 +272,11 @@ impl OutputWatchdog {
     }
 }
 
-fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
+fn audio_thread(
+    rx: Receiver<Command>,
+    state: Arc<Mutex<PlaybackSnapshot>>,
+    mut open_output: impl FnMut(OutputErrors) -> OutputResult,
+) {
     let stream_error = Arc::new(Mutex::new(None));
     // 失效的输出会在下一次装载时重新打开，不把启动时/休眠后的失败永久锁死。
     let mut output = match open_output(stream_error.clone()) {
@@ -561,7 +574,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("invalid.m4a");
         std::fs::write(&path, b"not an audio file").unwrap();
-        let engine = PlaybackEngine::with_volume(0.0);
+        let opens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_opens = opens.clone();
+        let engine = PlaybackEngine::with_output(0.0, move |_| {
+            worker_opens.fetch_add(1, Ordering::SeqCst);
+            Err(rodio::DeviceSinkError::NoDevice)
+        });
         for _ in 0..2 {
             let cached = CachedTrack {
                 path: path.clone(),
@@ -584,6 +602,8 @@ mod tests {
             assert!(!snap.error.is_empty());
             assert!(!snap.playing && !snap.finished);
         }
+        // 启动一次、两次装载各重试一次，失败没有把设备恢复永久锁死。
+        assert_eq!(opens.load(Ordering::SeqCst), 3);
     }
 
     #[test]
@@ -648,11 +668,16 @@ mod tests {
 
     #[test]
     fn engine_starts_without_audio_device_and_reports_state() {
-        // 没有音频设备时也应该能创建引擎（错误写进快照，不 panic）
-        let engine = PlaybackEngine::new();
+        // 确定性模拟没有音频设备：不依赖 runner 恰好未安装声卡。
+        let engine = PlaybackEngine::with_output(1.0, |_| Err(rodio::DeviceSinkError::NoDevice));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while engine.snapshot().error.is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let snap = engine.snapshot();
         assert_eq!(snap.volume, 1.0);
         assert!(!snap.playing);
+        assert!(!snap.error.is_empty());
     }
 
     #[test]

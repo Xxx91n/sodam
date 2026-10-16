@@ -457,6 +457,13 @@ impl Language {
             "语言已恢复为跟随系统" => "Language restored to system",
             "共 {}（歌曲 {} 首 {} / 封面 {} 张 {}）" => "Total {} ({} songs {}, {} covers {})",
             "已清理缓存：{} 个文件" => "Cleared {} cache files",
+            "音频缓存上限：{}" => "Audio cache limit: {}",
+            "自动清理较早使用的歌曲；正在播放或下载的文件暂时保留" => "Older songs are removed automatically; files in use are kept until released",
+            "清空缓存" => "Clear Cache",
+            "正在清理…" => "Clearing…",
+            "保存播放设置失败：{err}" => "Failed to save playback settings: {err}",
+            "音频输出长时间无响应，请重试播放" => "Audio output stopped responding. Try playing again.",
+            "音频线程已退出，请重启应用" => "The audio worker stopped. Please restart the app.",
             "签名服务：{}" => "Signer: {}",
             "配置：{}" => "Config: {}",
             "创建二维码失败，可点「重新获取二维码」重试" => {

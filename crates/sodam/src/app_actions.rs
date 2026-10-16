@@ -174,10 +174,25 @@ impl Root {
                 // 播放进度 / 时长上报：喂一拍快照（内部异步发请求，不阻塞）
                 root.play_reporter.observe(&snap);
                 // 加载完成：引擎已切到 pending 曲目 → 清 loading 态
-                if let Some(pending) = &root.pending_track {
-                    if snap.track_id == pending.id {
-                        root.pending_track = None;
-                    }
+                if root.pending_engine_load == Some(snap.load_seq) {
+                    root.pending_engine_load = None;
+                    root.pending_track = None;
+                    root.playing = snap.playing;
+                    cx.notify();
+                }
+                if root.pending_track.is_none()
+                    && !snap.error.is_empty()
+                    && !snap.track_id.is_empty()
+                    && root.playback_error.as_deref() != Some(snap.error.as_str())
+                {
+                    root.playing = false;
+                    root.playback_error = Some(snap.error.clone());
+                    root.status = snap.error.clone();
+                    cx.notify();
+                }
+                if let Some(error) = root.preferences_writer.take_error() {
+                    root.set_status("保存播放设置失败：{err}", &[error]);
+                    cx.notify();
                 }
                 if snap.playing || root.pending_track.is_some() {
                     cx.notify();
@@ -196,7 +211,12 @@ impl Root {
                 // 队列变更路径（spawn_prefetch 自身会去重，空转开销极小）
                 root.prefetch_patrol = root.prefetch_patrol.wrapping_add(1);
                 if root.prefetch_patrol % 25 == 0 {
+                    root.prefetch_failed
+                        .retain(|_, failed| failed.elapsed() < PREFETCH_RETRY_COOLDOWN);
                     root.spawn_prefetch(cx);
+                }
+                if root.prefetch_patrol % 300 == 0 {
+                    root.maintain_cache(cx);
                 }
                 root.load_more_recommendation(cx);
             });
@@ -261,26 +281,83 @@ impl Root {
 
     /// 设置音量（0.0~1.0）。
     pub fn set_volume(&mut self, volume: f32) {
-        let volume = volume.clamp(0.0, 1.0);
-        self.engine.set_volume(volume);
-        if volume > 0.0 {
-            self.volume_before_mute = volume;
-        }
+        self.settings.set_volume(volume);
+        self.engine.set_volume(self.settings.volume);
+        self.persist_playback_preferences();
     }
 
-    /// 静音 / 恢复。
+    /// 静音 / 恢复。以设置中的即时值判断，快速连点不依赖音频线程的回执时机。
     pub fn toggle_mute(&mut self) {
-        let current = self.engine.snapshot().volume;
-        if current > 0.001 {
-            self.volume_before_mute = current;
-            self.engine.set_volume(0.0);
-        } else {
-            self.engine.set_volume(if self.volume_before_mute <= 0.001 {
-                1.0
-            } else {
-                self.volume_before_mute
-            });
+        self.settings.toggle_mute();
+        self.engine.set_volume(self.settings.volume);
+        self.persist_playback_preferences();
+    }
+
+    pub(crate) fn set_cache_limit_mb(&mut self, mb: u64, cx: &mut Context<Self>) {
+        self.settings.audio_cache_limit_mb = mb.clamp(1024, 1024 * 1024);
+        self.persist_playback_preferences();
+        self.maintain_cache(cx);
+        cx.notify();
+    }
+
+    fn persist_playback_preferences(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            session.update_playback_preferences(&self.settings);
         }
+        self.preferences_writer.schedule(&self.settings);
+    }
+
+    pub(crate) fn maintain_cache(&mut self, cx: &mut Context<Self>) {
+        if self.cache_maintenance_running || self.cache_clearing {
+            return;
+        }
+        self.cache_maintenance_running = true;
+        let limit = self.settings.audio_cache_limit_mb;
+        let work = cx.background_spawn(async move {
+            sodam_core::cache::trim_audio(limit);
+            sodam_core::audio::cache_stats()
+        });
+        cx.spawn(async move |this, cx| {
+            let stats = work.await;
+            let _ = this.update(cx, |root, cx| {
+                root.cache_maintenance_running = false;
+                root.cache_summary = stats;
+                if root.settings.audio_cache_limit_mb != limit {
+                    root.maintain_cache(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn clear_cache(&mut self, cx: &mut Context<Self>) {
+        if self.cache_clearing {
+            return;
+        }
+        self.cache_clearing = true;
+        let work = cx.background_spawn(async { sodam_core::audio::clear_cache() });
+        cx.spawn(async move |this, cx| {
+            let removed = work.await;
+            let _ = this.update(cx, |root, cx| {
+                root.cache_clearing = false;
+                // 文件已清理，路径映射不能继续把不存在的图片当成命中。
+                root.covers = Arc::new(Default::default());
+                root.original_covers.clear();
+                if let Ok(mut tried) = root.cover_attempted.lock() {
+                    tried.clear();
+                }
+                if let Ok(mut tried) = root.original_cover_attempted.lock() {
+                    tried.clear();
+                }
+                root.cover_pool.seen.clear();
+                root.set_status("已清理缓存：{} 个文件", &[removed.to_string()]);
+                root.refresh_cache_stats(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     /// 跳到队列中的某一首并播放。
@@ -907,6 +984,7 @@ impl Root {
             return;
         };
         self.pending_track = Some(track.clone());
+        self.pending_engine_load = None;
         self.progress_preview = Some(0.0);
         self.set_status("已准备播放：{}", std::slice::from_ref(&track.title));
         self.ensure_covers(std::slice::from_ref(&track.cover), cx);
@@ -918,10 +996,12 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |root, cx| {
-                if root.play_seq == request_seq {
-                    root.pending_track = None;
-                    root.progress_preview = None;
+                if root.play_seq != request_seq {
+                    return;
                 }
+                root.pending_track = None;
+                root.playing = false;
+                root.progress_preview = None;
                 if let Err(err) = result {
                     root.playback_error = Some(err.to_string());
                     root.playing = false;
@@ -1859,8 +1939,19 @@ impl Root {
     }
 
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
+        if self.pending_track.is_some() {
+            return;
+        }
         let snapshot = self.engine.snapshot();
-        if snapshot.track_id.is_empty() {
+        if snapshot.track_id.is_empty()
+            || !snapshot.error.is_empty()
+            || snapshot.finished
+            || self
+                .queue
+                .current()
+                .is_some_and(|track| track.id != snapshot.track_id)
+        {
+            self.consecutive_failures = 0;
             if self.queue.is_empty() {
                 self.status = self.tr("队列是空的：先去搜索或打开一张歌单").to_string();
                 cx.notify();
@@ -1894,6 +1985,7 @@ impl Root {
         self.play_seq = self.play_seq.wrapping_add(1);
         let request_seq = self.play_seq;
         self.pending_track = Some(track.clone());
+        self.pending_engine_load = None;
         self.progress_preview = None;
         self.set_status("正在准备播放：{}…", std::slice::from_ref(&track.title));
         self.ensure_covers(std::slice::from_ref(&track.cover), cx);
@@ -1941,7 +2033,7 @@ impl Root {
                 }
                 match result {
                     Ok(cached) => {
-                        root.engine.load(track.clone(), cached.path, cached.quality);
+                        root.pending_engine_load = Some(root.engine.load(track.clone(), cached));
                         if std::env::var("SODAM_PLAYER_LOG").is_ok() {
                             eprintln!("[player] 装载完成：{}", track.title);
                         }

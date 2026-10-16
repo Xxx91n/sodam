@@ -544,6 +544,67 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                 )
                 .child(
                     div()
+                        .text_size(theme::Text::Small.size())
+                        .text_color(theme::text_muted())
+                        .child(root.localized(
+                            "音频缓存上限：{}",
+                            &[human_bytes(
+                                root.settings.audio_cache_limit_mb * 1024 * 1024,
+                            )],
+                        )),
+                )
+                .child(
+                    div().flex().flex_wrap().gap(px(theme::space::SM)).children(
+                        [
+                            (
+                                "−1 GiB".to_string(),
+                                root.settings.audio_cache_limit_mb.saturating_sub(1024),
+                            ),
+                            ("5 GiB".to_string(), 5 * 1024),
+                            ("10 GiB".to_string(), 10 * 1024),
+                            ("20 GiB".to_string(), 20 * 1024),
+                            ("50 GiB".to_string(), 50 * 1024),
+                            (
+                                "+1 GiB".to_string(),
+                                root.settings.audio_cache_limit_mb.saturating_add(1024),
+                            ),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (label, limit))| {
+                            div()
+                                .id(("cache-limit", index))
+                                .h(px(theme::size::CONTROL_SM))
+                                .px(px(theme::space::MD))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(theme::radius::ROW))
+                                .bg(if root.settings.audio_cache_limit_mb == limit {
+                                    theme::surface_selected()
+                                } else {
+                                    theme::surface_elevated()
+                                })
+                                .hover(|style| style.bg(theme::surface_hover()))
+                                .cursor_pointer()
+                                .text_size(theme::Text::Small.size())
+                                .child(label)
+                                .on_click(cx.listener(
+                                    move |root, _event: &ClickEvent, _window, cx| {
+                                        root.set_cache_limit_mb(limit, cx);
+                                    },
+                                ))
+                        }),
+                    ),
+                )
+                .child(
+                    div()
+                        .text_size(theme::Text::Small.size())
+                        .text_color(theme::text_muted())
+                        .child(root.tr("自动清理较早使用的歌曲；正在播放或下载的文件暂时保留")),
+                )
+                .child(
+                    div()
                         .id("clear-cache")
                         .flex()
                         .items_center()
@@ -557,14 +618,13 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                         .text_size(theme::Text::Small.size())
                         .text_color(theme::text())
                         .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
-                            let removed = sodam_core::audio::clear_cache();
-                            root.status =
-                                root.localized("已清理缓存：{} 个文件", &[removed.to_string()]);
-                            // 清理后立即刷新统计（后台扫盘）
-                            root.refresh_cache_stats(cx);
-                            cx.notify();
+                            root.clear_cache(cx);
                         }))
-                        .child(root.tr("清除歌曲缓存")),
+                        .child(if root.cache_clearing {
+                            root.tr("正在清理…")
+                        } else {
+                            root.tr("清空缓存")
+                        }),
                 )
         })
         .child(

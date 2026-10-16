@@ -34,7 +34,7 @@ fn transport_button(
 
 /// 内联音量滑条：细轨道 + 强调色已播段 + 圆形滑块，点或拖都能调。
 fn volume_slider(root: &Root, cx: &mut Context<Root>) -> impl IntoElement {
-    let volume = root.engine.snapshot().volume.clamp(0.0, 1.0);
+    let volume = root.settings.volume;
     let filled = (VOLUME_TRACK_W - VOLUME_THUMB) * volume;
     let bounds_slot = root.volume_track_bounds.clone();
     let apply = move |x: f32, root: &mut Root, cx: &mut Context<Root>| {
@@ -275,7 +275,11 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> impl IntoElement {
         .unwrap_or_else(|| language.text("选择一首歌开始播放吧").to_string());
     let detail = artist.clone();
     // 引擎错误（解码/设备）与「拉流失败」都显示在这一行
-    let error = if !snapshot.error.is_empty() {
+    let error = if snapshot.error == "音频输出长时间无响应，请重试播放" {
+        root.tr("音频输出长时间无响应，请重试播放").to_string()
+    } else if snapshot.error == "音频线程已退出，请重启应用" {
+        root.tr("音频线程已退出，请重启应用").to_string()
+    } else if !snapshot.error.is_empty() {
         snapshot.error.clone()
     } else {
         root.playback_error.clone().unwrap_or_default()
@@ -285,7 +289,7 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> impl IntoElement {
     let quality = localized_quality(snapshot.quality.clone(), language);
     let title_link_track = track.as_ref().cloned();
     let artist_link_track = track.as_ref().cloned();
-    let volume = snapshot.volume;
+    let volume = root.settings.volume;
     let liked = track
         .as_ref()
         .is_some_and(|track| root.liked_ids.contains(&track.id));

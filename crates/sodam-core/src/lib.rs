@@ -3,6 +3,7 @@
 //! 这里**不依赖 GPUI**，方便单独测试与复用（未来做 CLI/TUI 或守护进程都能直接用）。
 
 pub mod audio;
+pub mod cache;
 pub mod color;
 pub mod config;
 pub mod library;
@@ -10,6 +11,7 @@ pub mod login;
 pub mod mem;
 pub mod models;
 pub mod play_report;
+pub mod preferences;
 pub mod queue;
 pub mod session;
 

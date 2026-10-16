@@ -67,7 +67,7 @@ impl Session {
     /// 只检查「非空文件」会让被截断的半截下载永久冒充有效缓存，
     /// 表现为同一首歌每次都从中间开始/中途跳下一首。
     /// 旧格式 sidecar（只有音质、没记大小）视为 miss：重下一次完成自愈。
-    fn cached_track(&self, track_id: &str) -> Option<CachedTrack> {
+    fn cached_info(&self, track_id: &str) -> Option<(std::path::PathBuf, String)> {
         let path = crate::audio::cache_dir().join(format!("{track_id}-{}.m4a", self.quality_tag()));
         let actual = std::fs::metadata(&path).ok()?.len();
         if actual == 0 {
@@ -79,13 +79,32 @@ impl Session {
         let mut fields = text.split('\t');
         let quality = fields.next()?.trim().to_string();
         let size = fields.next()?.trim().parse::<u64>().ok()?;
-        (size == actual && !quality.is_empty()).then_some(CachedTrack { path, quality })
+        if size != actual || quality.is_empty() {
+            return None;
+        }
+        Some((path, quality))
+    }
+
+    fn cached_track(&self, track_id: &str) -> Option<CachedTrack> {
+        let path = crate::audio::cache_dir().join(format!("{track_id}-{}.m4a", self.quality_tag()));
+        let lease = crate::cache::CacheLease::acquire(&path);
+        let (path, quality) = self.cached_info(track_id)?;
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+        Some(CachedTrack {
+            path,
+            quality,
+            lease,
+        })
     }
 
     /// 这首是否已经在本地缓存里（**按当前音质档位**判断，
     /// 且要求 sidecar 大小校验一致；切换音质后旧档位的缓存不算命中）。
     pub fn is_cached(&self, track_id: &str) -> bool {
-        self.cached_track(track_id).is_some()
+        // 这里只是调度提示，不返回可播放文件，也不建立租约或刷新 LRU 时间。
+        self.cached_info(track_id).is_some()
     }
 }
 
@@ -95,6 +114,7 @@ pub struct CachedTrack {
     pub path: std::path::PathBuf,
     /// 人类可读的实际音质（例：`无损 871k` / `极高 320k`）。
     pub quality: String,
+    pub(crate) lease: crate::cache::CacheLease,
 }
 
 /// 把 `DownloadInfo` 翻成界面用的音质标签（以**实际拉到的流**为准）。
@@ -304,9 +324,12 @@ impl Session {
         let path = dir.join(format!("{0}-{tag}.m4a", track.id));
         // sidecar 记录「音质标签 + 实际字节数」，用于命中时的大小校验。
         let quality_path = dir.join(format!("{0}-{tag}.quality", track.id));
+        let download_lock = crate::cache::download_lock(&path);
+        let _writer = download_lock.lock().unwrap_or_else(|err| err.into_inner());
         if let Some(cached) = self.cached_track(&track.id) {
             return Ok(cached);
         }
+        let lease = crate::cache::CacheLease::acquire(&path);
 
         let song = libresoda::Song {
             id: track.id.clone(),
@@ -322,6 +345,7 @@ impl Session {
         // 先写临时文件，校验完整后再改名 —— 下载中断永远留不下「看起来有效」的半截缓存。
         // 临时名带进程号+序号：预取与手动播放并发下同一首时互不踩踏。
         let part = dir.join(part_file_name(&track.id, &tag));
+        let _part_lease = crate::cache::CacheLease::acquire(&part);
         let info = self
             .pumpkin
             .download_with_info(&song, &part)
@@ -334,7 +358,7 @@ impl Session {
         // 允许实际字节数更多：个别曲目的 play_info size 元数据会滞后于真实资产
         //（实测存在声明 10,569,897 / 实际 10,660,358 的完整可播文件），等值校验会误杀。
         let written = std::fs::metadata(&part).map(|meta| meta.len()).unwrap_or(0);
-        if is_truncated_download(info.size, written) {
+        if written == 0 || is_truncated_download(info.size, written) {
             let _ = std::fs::remove_file(&part);
             anyhow::bail!(
                 "下载不完整（至少需要 {} 字节，实际 {written} 字节）",
@@ -343,12 +367,31 @@ impl Session {
         }
 
         let quality = describe_quality(&info);
-        std::fs::rename(&part, &path).map_err(|err| anyhow::anyhow!("缓存落盘失败: {err}"))?;
-        let _ = std::fs::write(&quality_path, format!("{quality}\t{written}"));
+        // 这里只可能是无效旧缓存；Windows rename 不覆盖既有文件，先尝试移除。
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+        std::fs::rename(&part, &path).map_err(|err| {
+            let _ = std::fs::remove_file(&part);
+            anyhow::anyhow!("缓存落盘失败: {err}")
+        })?;
+        std::fs::write(&quality_path, format!("{quality}\t{written}"))
+            .context("保存音频缓存校验信息失败")?;
         // 无损整曲下载 + 解密会在内存里同时持有加密数据、明文、mdat 多份缓冲，
         // 结束后把已释放的页归还系统，避免 macOS malloc 保留导致 RSS 长期虚高。
         crate::mem::release_malloc_pressure();
-        Ok(CachedTrack { path, quality })
+        Ok(CachedTrack {
+            path,
+            quality,
+            lease,
+        })
+    }
+
+    /// 本地播放偏好不需要重建 API 客户端，但会话后续保存音质/登录时必须带上最新值。
+    pub fn update_playback_preferences(&mut self, settings: &Settings) {
+        self.settings.volume = settings.volume;
+        self.settings.volume_before_mute = settings.volume_before_mute;
+        self.settings.audio_cache_limit_mb = settings.audio_cache_limit_mb;
     }
 
     pub fn settings(&self) -> &Settings {
@@ -433,11 +476,7 @@ impl Session {
         if url.is_empty() {
             return None;
         }
-        let dir = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("sodam")
-            .join("covers")
-            .join("original");
+        let dir = crate::audio::cover_cache_dir().join("original");
         std::fs::create_dir_all(&dir).ok()?;
         let path = dir.join(format!("{:016x}.img", hash_url(url)));
         if std::fs::metadata(&path)
@@ -466,20 +505,14 @@ impl Session {
 
     /// 删除某张缩略图封面缓存；重试时用。
     pub fn invalidate_cover_path(&self, url: &str) -> bool {
-        let path = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("sodam")
-            .join("covers")
+        let path = crate::audio::cover_cache_dir()
             .join(format!("{:016x}-{COVER_MAX_EDGE}.img", hash_url(url)));
         std::fs::remove_file(path).is_ok()
     }
 
     /// 删除某张原图封面缓存；重试时用。
     pub fn invalidate_original_cover(&self, url: &str) -> bool {
-        let path = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("sodam")
-            .join("covers")
+        let path = crate::audio::cover_cache_dir()
             .join("original")
             .join(format!("{:016x}.img", hash_url(url)));
         std::fs::remove_file(path).is_ok()
@@ -490,10 +523,7 @@ impl Session {
         if url.is_empty() {
             return None;
         }
-        let dir = dirs::cache_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("sodam")
-            .join("covers");
+        let dir = crate::audio::cover_cache_dir();
         std::fs::create_dir_all(&dir).ok()?;
         // 文件名带目标边长：换尺寸/旧的全尺寸缓存不会混用
         let path = dir.join(format!("{:016x}-{COVER_MAX_EDGE}.img", hash_url(url)));

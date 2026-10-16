@@ -10,6 +10,8 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::models::TrackItem;
+use crate::session::CachedTrack;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 播放器状态快照（UI 每帧读这个，加锁时间极短）。
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -29,6 +31,8 @@ pub struct PlaybackSnapshot {
     /// 播完序号：每播完一次 +1。UI 用它做「处理过了吗」的判断 ——
     /// 之前用 track_id 比较，遇到循环同一首或 id 重复就会漏切。
     pub finished_seq: u64,
+    /// 最近处理完的装载请求（成功/失败都会更新），UI 不再只用 track_id 判断完成。
+    pub load_seq: u64,
 }
 
 impl PlaybackSnapshot {
@@ -62,6 +66,8 @@ enum Command {
         path: PathBuf,
         /// 这次实际拉到的流音质（显示用）
         quality: String,
+        lease: crate::cache::CacheLease,
+        sequence: u64,
     },
     Toggle,
     Play,
@@ -76,6 +82,7 @@ enum Command {
 pub struct PlaybackEngine {
     tx: Sender<Command>,
     snapshot: Arc<Mutex<PlaybackSnapshot>>,
+    next_load: AtomicU64,
 }
 
 impl Default for PlaybackEngine {
@@ -86,13 +93,14 @@ impl Default for PlaybackEngine {
 
 impl PlaybackEngine {
     pub fn new() -> Self {
+        Self::with_volume(1.0)
+    }
+
+    pub fn with_volume(saved_volume: f32) -> Self {
         let (tx, rx) = channel();
-        // 测试 / 无人值守挂机：`SODAM_VOLUME=0` 可让实例起来就是静音。
-        let initial_volume = std::env::var("SODAM_VOLUME")
-            .ok()
-            .and_then(|value| value.trim().parse::<f32>().ok())
-            .unwrap_or(1.0)
-            .clamp(0.0, 1.0);
+        // 显式环境覆盖仍优先（静音开发测试），无覆盖时恢复用户保存的值。
+        let initial_volume =
+            initial_volume(saved_volume, std::env::var("SODAM_VOLUME").ok().as_deref());
         let snapshot = Arc::new(Mutex::new(PlaybackSnapshot {
             volume: initial_volume,
             ..Default::default()
@@ -106,7 +114,11 @@ impl PlaybackEngine {
                 snap.error = format!("音频线程启动失败：{err}");
             }
         }
-        Self { tx, snapshot }
+        Self {
+            tx,
+            snapshot,
+            next_load: AtomicU64::new(1),
+        }
     }
 
     pub fn snapshot(&self) -> PlaybackSnapshot {
@@ -118,37 +130,57 @@ impl PlaybackEngine {
 
     /// 播放一个**已经下载并解密**到本地的文件。
     /// 装载并播放：`quality` 是这次实际拉到的流音质（显示用）。
-    pub fn load(&self, track: TrackItem, path: PathBuf, quality: impl Into<String>) {
-        let _ = self.tx.send(Command::Load {
+    pub fn load(&self, track: TrackItem, cached: CachedTrack) -> u64 {
+        let sequence = self.next_load.fetch_add(1, Ordering::Relaxed);
+        self.send(Command::Load {
             track: Box::new(track),
-            path,
-            quality: quality.into(),
+            path: cached.path,
+            quality: cached.quality,
+            lease: cached.lease,
+            sequence,
         });
+        sequence
+    }
+
+    fn send(&self, command: Command) {
+        if let Err(err) = self.tx.send(command) {
+            let message = "音频线程已退出，请重启应用".to_string();
+            if let Command::Load {
+                track, sequence, ..
+            } = err.0
+            {
+                load_failed(&self.snapshot, &track, sequence, message);
+            } else {
+                set_error(&self.snapshot, message);
+            }
+        }
     }
 
     pub fn toggle(&self) {
-        let _ = self.tx.send(Command::Toggle);
+        self.send(Command::Toggle);
     }
 
     pub fn play(&self) {
-        let _ = self.tx.send(Command::Play);
+        self.send(Command::Play);
     }
 
     pub fn pause(&self) {
-        let _ = self.tx.send(Command::Pause);
+        self.send(Command::Pause);
     }
 
     pub fn stop(&self) {
-        let _ = self.tx.send(Command::Stop);
+        self.send(Command::Stop);
     }
 
     pub fn set_volume(&self, volume: f32) {
-        let _ = self.tx.send(Command::SetVolume(volume.clamp(0.0, 1.0)));
+        if volume.is_finite() {
+            self.send(Command::SetVolume(volume.clamp(0.0, 1.0)));
+        }
     }
 
     /// 跳转到指定秒数（越界会被引擎裁剪到 [0, 时长]）。
     pub fn seek(&self, seconds: f64) {
-        let _ = self.tx.send(Command::Seek(seconds.max(0.0)));
+        self.send(Command::Seek(seconds.max(0.0)));
     }
 }
 
@@ -156,19 +188,85 @@ fn set_error(state: &Arc<Mutex<PlaybackSnapshot>>, message: String) {
     if let Ok(mut snap) = state.lock() {
         snap.error = message;
         snap.playing = false;
+        snap.finished = false;
+    }
+}
+
+fn initial_volume(saved: f32, override_value: Option<&str>) -> f32 {
+    override_value
+        .and_then(|value| value.trim().parse::<f32>().ok())
+        .filter(|value| value.is_finite())
+        .unwrap_or(if saved.is_finite() { saved } else { 1.0 })
+        .clamp(0.0, 1.0)
+}
+
+fn load_failed(
+    state: &Arc<Mutex<PlaybackSnapshot>>,
+    track: &TrackItem,
+    sequence: u64,
+    message: String,
+) {
+    if let Ok(mut snap) = state.lock() {
+        snap.track_id = track.id.clone();
+        snap.title = track.title.clone();
+        snap.load_seq = sequence;
+        snap.position_seconds = 0.0;
+        snap.duration_seconds = track.duration_seconds.max(0) as f64;
+        snap.quality.clear();
+        snap.error = message;
+        snap.playing = false;
+        snap.finished = false;
     }
 }
 
 fn sync_progress(state: &Arc<Mutex<PlaybackSnapshot>>, player: &rodio::Player) {
+    // 不拿快照锁调用 rodio，避免设备/解码器锁等待传染到 UI 的 snapshot()。
+    let position = player.get_pos().as_secs_f64();
+    let playing = !player.is_paused() && !player.empty();
     if let Ok(mut snap) = state.lock() {
-        snap.position_seconds = player.get_pos().as_secs_f64();
-        snap.playing = !player.is_paused() && !player.empty();
+        snap.position_seconds = position;
+        snap.playing = playing;
+    }
+}
+
+fn open_output(
+    errors: Arc<Mutex<Option<String>>>,
+) -> Result<rodio::MixerDeviceSink, rodio::DeviceSinkError> {
+    rodio::DeviceSinkBuilder::from_default_device()?
+        .with_error_callback(move |err| {
+            if let Ok(mut errors) = errors.lock() {
+                *errors = Some(format!("音频设备连接中断：{err}"));
+            }
+        })
+        .open_sink_or_fallback()
+}
+
+struct OutputWatchdog {
+    position: f64,
+    advanced_at: std::time::Instant,
+}
+
+impl OutputWatchdog {
+    fn new(now: std::time::Instant) -> Self {
+        Self {
+            position: 0.0,
+            advanced_at: now,
+        }
+    }
+
+    fn stalled(&mut self, position: f64, running: bool, now: std::time::Instant) -> bool {
+        if !running || (position - self.position).abs() > 0.001 {
+            self.position = position;
+            self.advanced_at = now;
+        }
+        running && now.duration_since(self.advanced_at) >= std::time::Duration::from_secs(15)
     }
 }
 
 fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
-    // 打不开输出设备就把错误记在快照里，后续命令照常消费（界面不崩）
-    let output = match rodio::DeviceSinkBuilder::open_default_sink() {
+    let stream_error = Arc::new(Mutex::new(None));
+    // 失效的输出会在下一次装载时重新打开，不把启动时/休眠后的失败永久锁死。
+    let mut output = match open_output(stream_error.clone()) {
         Ok(device) => Some(device),
         Err(err) => {
             set_error(&state, format!("音频设备不可用：{err}"));
@@ -177,9 +275,21 @@ fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
     };
 
     let mut player: Option<rodio::Player> = None;
+    let mut _current_lease = None;
+    let mut watchdog = OutputWatchdog::new(std::time::Instant::now());
     // 当前曲目是否已经上报过「播完」；换曲时重置
     let mut finished_reported = false;
     loop {
+        let stream_failure = stream_error.lock().ok().and_then(|mut error| error.take());
+        if let Some(error) = stream_failure {
+            if let Some(previous) = player.take() {
+                previous.stop();
+            }
+            _current_lease = None;
+            output = None;
+            set_error(&state, error);
+            finished_reported = true;
+        }
         // 为什么要超时 recv：进度必须**持续**更新（UI 的进度条依赖它）。
         // 之前只在 play/pause 时同步一次，所以进度条永远停在 0。
         let command = match rx.recv_timeout(std::time::Duration::from_millis(100)) {
@@ -189,6 +299,20 @@ fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
         };
         let Some(command) = command else {
             if let Some(current) = &player {
+                if watchdog.stalled(
+                    current.get_pos().as_secs_f64(),
+                    !current.is_paused() && !current.empty(),
+                    std::time::Instant::now(),
+                ) {
+                    if let Some(previous) = player.take() {
+                        previous.stop();
+                    }
+                    _current_lease = None;
+                    output = None;
+                    set_error(&state, "音频输出长时间无响应，请重试播放".to_string());
+                    finished_reported = true;
+                    continue;
+                }
                 sync_progress(&state, current);
                 // 播完：置 finished，UI 会据此自动切下一首
                 // 注意：sync_progress 会把 playing 置 false，所以这里不能用 playing 判断，
@@ -209,25 +333,43 @@ fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
                 track,
                 path,
                 quality,
+                lease,
+                sequence,
             } => {
                 if let Some(previous) = player.take() {
                     previous.stop();
                 }
+                _current_lease = None;
+                if output.is_none() {
+                    match open_output(stream_error.clone()) {
+                        Ok(device) => output = Some(device),
+                        Err(err) => {
+                            load_failed(&state, &track, sequence, format!("音频设备不可用：{err}"));
+                            continue;
+                        }
+                    }
+                }
                 let Some(device) = &output else {
-                    set_error(&state, "音频设备不可用，无法播放".to_string());
                     continue;
                 };
                 let file = match std::fs::File::open(&path) {
                     Ok(file) => file,
                     Err(err) => {
-                        set_error(&state, format!("打开音频文件失败：{err}"));
+                        load_failed(&state, &track, sequence, format!("打开音频文件失败：{err}"));
                         continue;
                     }
                 };
                 let decoder = match rodio::Decoder::new(std::io::BufReader::new(file)) {
                     Ok(decoder) => decoder,
                     Err(err) => {
-                        set_error(&state, format!("解码失败（文件可能未解密）：{err}"));
+                        // 无效缓存不能永久冒充命中；下一次播放重新下载，而不是反复解码坏文件。
+                        crate::cache::invalidate_audio(&path);
+                        load_failed(
+                            &state,
+                            &track,
+                            sequence,
+                            format!("解码失败（文件可能未解密）：{err}"),
+                        );
                         continue;
                     }
                 };
@@ -237,6 +379,7 @@ fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
                 new_player.append(decoder);
                 new_player.play();
                 if let Ok(mut snap) = state.lock() {
+                    snap.load_seq = sequence;
                     snap.track_id = track.id.clone();
                     snap.title = track.title.clone();
                     snap.playing = true;
@@ -248,6 +391,8 @@ fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
                     finished_reported = false;
                 }
                 player = Some(new_player);
+                watchdog = OutputWatchdog::new(std::time::Instant::now());
+                _current_lease = Some(lease);
             }
             Command::Toggle => {
                 if let Some(current) = &player {
@@ -277,8 +422,10 @@ fn audio_thread(rx: Receiver<Command>, state: Arc<Mutex<PlaybackSnapshot>>) {
                 if let Some(current) = player.take() {
                     current.stop();
                 }
+                _current_lease = None;
                 if let Ok(mut snap) = state.lock() {
                     snap.playing = false;
+                    snap.finished = false;
                     snap.position_seconds = 0.0;
                 }
             }
@@ -318,18 +465,12 @@ fn format_seconds(seconds: f64) -> String {
 
 /// 音频缓存目录。
 pub fn cache_dir() -> std::path::PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("sodam")
-        .join("audio")
+    crate::cache::root_dir().join("audio")
 }
 
 /// 封面缓存目录。
 pub fn cover_cache_dir() -> std::path::PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("sodam")
-        .join("covers")
+    crate::cache::root_dir().join("covers")
 }
 
 /// 目录占用：**递归**统计（字节数，文件数）。
@@ -386,24 +527,114 @@ pub fn cache_stats() -> (u64, usize, u64, usize) {
 
 /// 清空缓存（音频 + 封面），返回删除的文件数。
 pub fn clear_cache() -> usize {
-    let mut removed = 0usize;
-    for dir in [cache_dir(), cover_cache_dir()] {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && std::fs::remove_file(&path).is_ok() {
-                removed += 1;
-            }
-        }
-    }
-    removed
+    crate::cache::clear_in(&cache_dir()) + crate::cache::clear_in(&cover_cache_dir())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watchdog_reports_stalls_but_not_pauses_or_normal_progress() {
+        let now = std::time::Instant::now();
+        let mut watchdog = OutputWatchdog::new(now);
+        assert!(!watchdog.stalled(0.0, true, now + std::time::Duration::from_secs(14)));
+        assert!(watchdog.stalled(0.0, true, now + std::time::Duration::from_secs(15)));
+        assert!(!watchdog.stalled(0.0, false, now + std::time::Duration::from_secs(100)));
+        assert!(!watchdog.stalled(0.0, true, now + std::time::Duration::from_secs(101)));
+        assert!(!watchdog.stalled(2.0, true, now + std::time::Duration::from_secs(115)));
+        assert!(!watchdog.stalled(3.0, true, now + std::time::Duration::from_secs(129)));
+    }
+
+    #[test]
+    fn saved_volume_and_explicit_override_are_sanitized() {
+        assert_eq!(initial_volume(0.37, None), 0.37);
+        assert_eq!(initial_volume(0.0, None), 0.0);
+        assert_eq!(initial_volume(0.37, Some("0")), 0.0);
+        assert_eq!(initial_volume(0.37, Some("NaN")), 0.37);
+        assert_eq!(initial_volume(0.37, Some("bad")), 0.37);
+        assert_eq!(initial_volume(3.0, None), 1.0);
+    }
+
+    #[test]
+    fn audio_thread_acknowledges_failed_loads_and_accepts_retries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("invalid.m4a");
+        std::fs::write(&path, b"not an audio file").unwrap();
+        let engine = PlaybackEngine::with_volume(0.0);
+        for _ in 0..2 {
+            let cached = CachedTrack {
+                path: path.clone(),
+                quality: "test".into(),
+                lease: crate::cache::CacheLease::acquire(&path),
+            };
+            let seq = engine.load(
+                TrackItem {
+                    id: "invalid".into(),
+                    ..Default::default()
+                },
+                cached,
+            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while engine.snapshot().load_seq != seq && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let snap = engine.snapshot();
+            assert_eq!(snap.load_seq, seq);
+            assert!(!snap.error.is_empty());
+            assert!(!snap.playing && !snap.finished);
+        }
+    }
+
+    #[test]
+    fn disconnected_worker_acknowledges_loads_and_releases_their_leases() {
+        let (tx, rx) = channel();
+        drop(rx);
+        let engine = PlaybackEngine {
+            tx,
+            snapshot: Arc::new(Mutex::new(PlaybackSnapshot::default())),
+            next_load: AtomicU64::new(1),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cached.m4a");
+        std::fs::write(&path, b"cached").unwrap();
+        let cached = CachedTrack {
+            lease: crate::cache::CacheLease::acquire(&path),
+            path,
+            quality: "test".into(),
+        };
+        let seq = engine.load(
+            TrackItem {
+                id: "failed".into(),
+                ..Default::default()
+            },
+            cached,
+        );
+        let snap = engine.snapshot();
+        assert_eq!(snap.load_seq, seq);
+        assert_eq!(snap.track_id, "failed");
+        assert!(!snap.playing && !snap.finished && !snap.error.is_empty());
+        assert_eq!(crate::cache::clear_in(dir.path()), 1);
+    }
+
+    #[test]
+    fn load_failure_acknowledges_the_request_and_clears_finished() {
+        let state = Arc::new(Mutex::new(PlaybackSnapshot {
+            finished: true,
+            playing: true,
+            ..Default::default()
+        }));
+        let track = TrackItem {
+            id: "failed-track".into(),
+            ..Default::default()
+        };
+        load_failed(&state, &track, 42, "device unavailable".into());
+        let snap = state.lock().unwrap();
+        assert_eq!(snap.load_seq, 42);
+        assert_eq!(snap.track_id, track.id);
+        assert!(!snap.playing && !snap.finished);
+        assert!(!snap.error.is_empty());
+    }
 
     #[test]
     fn progress_label_formats() {

@@ -60,13 +60,29 @@ libresoda 的 HTTP 和下载是阻塞的；GPUI 渲染不能阻塞。规则如�
 
 ```text
 TrackItem + cache path
-  → PlaybackEngine::load(track, path, quality)
+  → CachedTrack（本地路径、音质、缓存租约）
+  → PlaybackEngine::load(track, cached) → 装载序号
   → rodio Decoder + Sink
   → snapshot: track_id / title / playing / position / duration / quality / error
 ```
 
 播放结束时音频线程标记 `finished`；GPUI 心跳读取 snapshot，调用 `next_track`。
 签名不足或设备不匹配时，libresoda 可能只返回试听；错误会进入状态行或播放页重试区。
+
+音频装载成功/失败都回执 `load_seq`，心跳据此退出 loading，不再只比较 track id。
+输出设备错误或非暂停状态下 15 秒无进度会释放失效输出并报告错误；用户再次点播放时
+重新装载缓存、打开设备，不会因为启动/休眠后的一次设备失败而永远不可播放。
+
+## 播放偏好与磁盘缓存
+
+- `PreferencesWriter` 是后台单写者：音量/静音/缓存上限防抖保存，只合并这些字段，
+  避免覆盖刚修改的账号/主题。所有配置写入用同一进程内锁和同目录原子替换，退出刷尾。
+- `cache` 默认限制音频为 10 GiB，设置页可调整；后台启动/定时维护，不在渲染线程扫盘。
+  实际缓存命中更新音频 mtime，巡检的 `is_cached` 不刷新最近使用时间。
+- `CacheLease` 从下载/缓存命中，经后台返回值、音频命令一直传到播放器寿命结束，
+  淘汰与手动清理都跳过被租用的音频及其 sidecar。同一缓存目标的下载写者串行化。
+- 清理不跟随符号链接，覆盖封面原图子目录；近期 `.part` 保留，超过 24 小时可清理。
+  上限是软上限：受保护文件允许暂时超额，释放后由下一轮维护淘汰。
 
 ## 导航与详情页
 

@@ -6133,12 +6133,14 @@ version = "0.2.7"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
+ "futures-channel",
  "image",
  "libresoda",
  "qrcode",
  "rodio",
  "serde",
  "serde_json",
+ "tempfile",
  "ureq",
 ]
 

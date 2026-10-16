@@ -275,7 +275,7 @@ pub struct Root {
     pub queue_scroll: gpui::UniformListScrollHandle,
     /// 队列抽屉是否展开。
     pub queue_open: bool,
-    pub volume_before_mute: f32,
+    pub(crate) preferences_writer: sodam_core::preferences::PreferencesWriter,
     /// 播放栏弹层锚点：触发元素（音质徽章/音量/队列）在窗口里的位置，
     /// 由画布测量，弹层据此精确贴住入口。
     /// 进度条轨道在窗口里的位置（画布测量，鼠标事件据此换算 seek 位置）。
@@ -328,6 +328,10 @@ pub struct Root {
     /// 缓存统计快照（音频字节, 歌曲数, 封面字节, 封面张数）：
     /// 后台扫盘后回填，设置页只读它（渲染路径不做同步 IO）。
     pub(crate) cache_summary: (u64, usize, u64, usize),
+    pub(crate) cache_maintenance_running: bool,
+    pub(crate) cache_clearing: bool,
+    /// 下载完成后交给音频线程的装载序号；避免同一曲目重载/失败时永久 loading。
+    pub(crate) pending_engine_load: Option<u64>,
     /// 正在加载（下载/解密）的曲目：非空时播放栏显示 loading，且进度条不可拖。
     pub pending_track: Option<TrackItem>,
     /// 已处理过的「播完」序号（配合引擎的 finished_seq 自动切歌）。
@@ -359,7 +363,9 @@ pub struct Root {
 
 impl Root {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let settings = Settings::load().merged_with_env();
+        let mut settings = Settings::load().merged_with_env();
+        let engine = PlaybackEngine::with_volume(settings.volume);
+        settings.volume = engine.snapshot().volume;
         // 首次运行就把配置落盘：用户可以直接编辑 ~/.config/sodam/config.json
         // 换签名服务 / 钉死设备指纹（默认值已内置，见 sodam_core::config）
         if !Settings::config_path().exists() {
@@ -501,13 +507,18 @@ impl Root {
             open_album: None,
             loading_album: false,
             queue_open: false,
-            volume_before_mute: 1.0,
+            preferences_writer: sodam_core::preferences::PreferencesWriter::new(
+                Settings::config_path(),
+            ),
             progress_track_bounds: Arc::new(Mutex::new(None)),
             volume_track_bounds: Arc::new(Mutex::new(None)),
             prefetch_inflight: HashSet::new(),
             prefetch_failed: HashMap::new(),
             prefetch_patrol: 0,
             cache_summary: (0, 0, 0, 0),
+            cache_maintenance_running: false,
+            cache_clearing: false,
+            pending_engine_load: None,
             pending_track: None,
             last_finished_seq: 0,
             progress_preview: None,
@@ -522,9 +533,12 @@ impl Root {
             cover_pool: CoverPool::new(),
             login: LoginState::Idle,
             account: None,
-            engine: PlaybackEngine::new(),
+            engine,
             play_reporter,
         };
+        cx.on_app_quit(|root, _cx| root.preferences_writer.flush())
+            .detach();
+        root.maintain_cache(cx);
         if logged_in {
             root.refresh_account(cx);
             root.load_liked_ids(cx);

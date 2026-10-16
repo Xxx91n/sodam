@@ -1,7 +1,11 @@
 //! 应用配置（`~/.config/sodam/config.json`）。
 
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+pub(crate) static SETTINGS_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 /// 与 libresoda / libmssdk 对接需要的全部设置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,6 +23,11 @@ pub struct Settings {
     pub fp: String,
     /// 音质偏好：`best` / `lossless` / `highest` / `medium` / `low`。
     pub quality: String,
+    /// 当前音量与静音前音量（0..=1）。旧配置缺字段时沿用 100%。
+    pub volume: f32,
+    pub volume_before_mute: f32,
+    /// 音频磁盘缓存上限（MiB），默认 10 GiB，设置页可调整。
+    pub audio_cache_limit_mb: u64,
     /// 界面主题：`dark` / `light`；空 = 第一次启动跟随系统偏好。
     pub theme: String,
     /// 界面语言：`zh` / `en`；空或 `auto` = 跟随系统语言。
@@ -83,6 +92,9 @@ impl Default for Settings {
             fp: String::new(),
             // 空 = 自动：登录后按账号 VIP 情况挑能用的最高档（见 Session::refresh_quality）
             quality: String::new(),
+            volume: 1.0,
+            volume_before_mute: 1.0,
+            audio_cache_limit_mb: crate::cache::DEFAULT_AUDIO_LIMIT_MB,
             theme: String::new(),
             language: String::new(),
             shortcut_toggle: String::new(),
@@ -94,6 +106,9 @@ impl Default for Settings {
 
 impl Settings {
     pub fn config_path() -> PathBuf {
+        if let Some(path) = std::env::var_os("SODAM_CONFIG_PATH").filter(|path| !path.is_empty()) {
+            return path.into();
+        }
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
             .join("sodam")
@@ -112,7 +127,8 @@ impl Settings {
         else {
             return Self::default();
         };
-        let (settings, migrated) = settings.migrated();
+        let (mut settings, migrated) = settings.migrated();
+        settings.normalize_playback();
         // 迁移后立刻落盘：用户下次打开配置文件看到的、以及设置页显示的，都是真正生效的那份。
         // 写失败不影响启动，内存里的值已经是迁移后的。
         if migrated {
@@ -143,11 +159,57 @@ impl Settings {
     }
 
     pub fn save_to(&self, path: &Path) -> anyhow::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, serde_json::to_vec_pretty(self)?)?;
+        let _guard = SETTINGS_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        self.save_to_locked(path)
+    }
+
+    pub(crate) fn save_to_locked(&self, path: &Path) -> anyhow::Result<()> {
+        let parent = path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        // 同目录原子替换，避免退出/并发保存留下半份 JSON（Windows 也支持替换旧文件）。
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        file.write_all(&serde_json::to_vec_pretty(self)?)?;
+        file.persist(path).map_err(|err| err.error)?;
         Ok(())
+    }
+
+    pub fn normalize_playback(&mut self) {
+        self.volume = if self.volume.is_finite() {
+            self.volume.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self.volume_before_mute =
+            if self.volume_before_mute.is_finite() && self.volume_before_mute > 0.0 {
+                self.volume_before_mute.min(1.0)
+            } else {
+                1.0
+            };
+        self.audio_cache_limit_mb = self.audio_cache_limit_mb.clamp(1024, 1024 * 1024);
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        if !volume.is_finite() {
+            return;
+        }
+        self.volume = volume.clamp(0.0, 1.0);
+        if self.volume > 0.0 {
+            self.volume_before_mute = self.volume;
+        }
+    }
+
+    pub fn toggle_mute(&mut self) {
+        if self.volume > 0.0 {
+            self.volume_before_mute = self.volume;
+            self.volume = 0.0;
+        } else {
+            self.set_volume(self.volume_before_mute);
+        }
     }
 
     /// 是否已经具备"能放 VIP 整曲"的条件（cookie + 签名服务）。
@@ -198,6 +260,26 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_config_has_ten_gib_limit_and_audio_defaults() {
+        let mut settings: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(settings.volume, 1.0);
+        assert_eq!(settings.audio_cache_limit_mb, 10 * 1024);
+        settings.set_volume(0.31);
+        settings.toggle_mute();
+        settings.toggle_mute();
+        assert_eq!(settings.volume, 0.31);
+        settings.set_volume(f32::NAN);
+        assert_eq!(settings.volume, 0.31);
+        settings.volume = -5.0;
+        settings.volume_before_mute = 0.0;
+        settings.audio_cache_limit_mb = u64::MAX;
+        settings.normalize_playback();
+        assert_eq!(settings.volume, 0.0);
+        assert_eq!(settings.volume_before_mute, 1.0);
+        assert_eq!(settings.audio_cache_limit_mb, 1024 * 1024);
+    }
 
     #[test]
     fn round_trip_and_defaults() {

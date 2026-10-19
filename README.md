@@ -12,6 +12,11 @@
   </p>
   <p>音乐能力由 <a href="https://github.com/sodahub-org/libresoda">libresoda</a> 提供；应用签名服务可对接
     <a href="https://github.com/sodahub-org/libmssdk">libmssdk</a>。</p>
+  <p><a href="https://sodahub-org.github.io/sodam/"><strong>官网</strong></a> ·
+    <a href="https://sodahub-org.github.io/sodam/install.html">安装说明</a> ·
+    <a href="https://sodahub-org.github.io/sodam/llm.html">让 AI 帮我装</a> ·
+    <a href="https://sodahub-org.github.io/sodam/changelog.html">更新日志</a> ·
+    <a href="https://sodahub-org.github.io/sodam/developers.html">开发者文档</a></p>
   <p>
     <a href="https://linux.do/t/topic/2921819">
       <img src="docs/img/linux-do.svg" width="22" alt="LINUX DO">

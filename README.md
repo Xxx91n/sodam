@@ -41,6 +41,10 @@ SodaM 是**汽水音乐的第三方桌面客户端**，面向 Linux / macOS / Wi
 
 ### 维护者与贡献者
 
+想参与开发？先读 [CONTRIBUTING.md](CONTRIBUTING.md)（构建脚本、开发约定、提交与发布流程），
+提 issue 请用[模板](https://github.com/sodahub-org/sodam/issues/new/choose)。
+
+
 <table align="center">
   <tr>
     <td align="center">

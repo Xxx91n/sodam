@@ -260,6 +260,10 @@ fn main() {
                             tray.title = state.title;
                             tray.subtitle = state.subtitle;
                             tray.playing = state.playing;
+                            // 之前漏了这两个：菜单顶部「正在播放」那行由 has_track 决定，
+                            // 不同步的话播着歌也一直显示「未在播放」。
+                            tray.has_track = state.has_track;
+                            tray.cover_path = state.cover_path.clone();
                         });
                     }
                 };

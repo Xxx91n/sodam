@@ -90,8 +90,8 @@ pub mod linux {
         pub(crate) subtitle: String,
         pub(crate) playing: bool,
         pub(crate) has_track: bool,
-        cover_path: Option<std::path::PathBuf>,
-        /// 封面转好的 ARGB32，按源路径缓存（同步每 500ms 一次，不必反复解码）。
+        pub(crate) cover_path: Option<std::path::PathBuf>,
+        /// 封面缩略图（PNG 字节），按源路径缓存（同步每 500ms 一次，不必反复解码）。
         cover_cache: std::cell::RefCell<Option<(std::path::PathBuf, Vec<u8>)>>,
         icon_cache: OnceLock<Icon>,
     }
@@ -122,8 +122,11 @@ pub mod linux {
             }
         }
 
-        /// 当前曲目封面的菜单图标（SNI 的 ARGB32）。拿不到就返回空，菜单行照常显示文字。
-        fn cover_argb(&self) -> Vec<u8> {
+        /// 当前曲目封面的菜单图标。
+        ///
+        /// DBusMenu 的 `icon-data` 是 **PNG 字节**（不是 SNI 顶栏图标那种裸 ARGB32），
+        /// ksni 只是把字节原样透传；之前传 ARGB32，宿主解不出图，菜单第一行就没封面。
+        fn cover_png(&self) -> Vec<u8> {
             let state = self.state();
             let Some(path) = state.cover_path.as_ref() else {
                 return Vec::new();
@@ -137,12 +140,15 @@ pub mod linux {
                 .ok()
                 .and_then(|bytes| image::load_from_memory(&bytes).ok())
                 .map(|image| {
-                    let image = image.thumbnail(COVER, COVER).to_rgba8();
-                    let mut argb = Vec::with_capacity(image.as_raw().len());
-                    for pixel in image.pixels() {
-                        argb.extend_from_slice(&[pixel[3], pixel[0], pixel[1], pixel[2]]);
+                    let thumbnail = image.thumbnail(COVER, COVER);
+                    let mut png = Vec::new();
+                    if thumbnail
+                        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                        .is_err()
+                    {
+                        png.clear();
                     }
-                    argb
+                    png
                 })
                 .unwrap_or_default();
             *self.cover_cache.borrow_mut() = Some((path.clone(), data.clone()));
@@ -199,7 +205,7 @@ pub mod linux {
                 // 没曲目时禁用（避免看起来能点却没反应）。
                 StandardItem {
                     label: caption,
-                    icon_data: self.cover_argb(),
+                    icon_data: self.cover_png(),
                     enabled: self.has_track,
                     activate: Box::new(|this: &mut Self| this.send(TrayCommand::Show)),
                     ..Default::default()

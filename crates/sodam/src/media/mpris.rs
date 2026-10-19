@@ -8,6 +8,7 @@
 
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
+use std::time::Duration;
 
 use anyhow::Result;
 use futures_lite::future;
@@ -16,6 +17,10 @@ use mpris_server::{Metadata, PlaybackStatus, Player, Time, TrackId};
 use tokio::sync::mpsc;
 
 use super::{Command, NowPlaying, BUS_NAME, DESKTOP_ENTRY, DISPLAY_NAME};
+
+/// 注册失败后的首次重试间隔；之后指数退避到这个上限。
+const REGISTER_RETRY: Duration = Duration::from_secs(5);
+const REGISTER_RETRY_MAX: Duration = Duration::from_secs(60);
 
 /// 发布到 MPRIS 上的一次变更，按发送顺序应用。
 enum Update {
@@ -37,23 +42,44 @@ impl Controls {
         cx: &mut App,
     ) -> Result<Self> {
         let (updates, mut receiver) = mpsc::unbounded_channel();
-        let _server = cx.spawn(async move |_| {
-            let player = match build(commands).await {
-                Ok(player) => player,
-                Err(error) => {
-                    eprintln!("[media] 无法注册 MPRIS：{error}");
+        let _server = cx.spawn(async move |cx| {
+            // 抢总线名可能失败：上一个实例还没退出、或者同时开了两个 sodam。
+            // 之前失败就直接放弃，于是"第二个启动的实例永远没有 MPRIS"，
+            // 媒体键和桌面挂件全用它——这里改成失败后退避重试。
+            let mut backoff = REGISTER_RETRY;
+            loop {
+                let player = match build(commands.clone()).await {
+                    Ok(player) => player,
+                    Err(error) => {
+                        eprintln!(
+                            "[media] 无法注册 MPRIS：{error}；{} 秒后重试",
+                            backoff.as_secs()
+                        );
+                        cx.background_executor().timer(backoff).await;
+                        backoff = (backoff * 2).min(REGISTER_RETRY_MAX);
+                        continue;
+                    }
+                };
+                backoff = REGISTER_RETRY;
+
+                let apply = async {
+                    while let Some(update) = receiver.recv().await {
+                        if let Err(error) = apply(&player, update).await {
+                            eprintln!("[media] MPRIS 发布失败：{error}");
+                        }
+                    }
+                };
+                // 两个 future 都要一直跑：`run()` 服务请求，`apply` 应用应用侧的状态。
+                future::zip(player.run(), apply).await;
+
+                // 更新通道已关闭 = 应用侧丢掉了 Controls，没必要再重连。
+                if receiver.is_closed() {
                     return;
                 }
-            };
-            let apply = async {
-                while let Some(update) = receiver.recv().await {
-                    if let Err(error) = apply(&player, update).await {
-                        eprintln!("[media] MPRIS 发布失败：{error}");
-                    }
-                }
-            };
-            // 两个 future 都要一直跑：`run()` 服务请求，`apply` 应用应用侧的状态。
-            future::zip(player.run(), apply).await;
+                // 否则是 D-Bus 连接断了（会话重启等），退避后重新注册。
+                eprintln!("[media] MPRIS 连接断开，{} 秒后重连", backoff.as_secs());
+                cx.background_executor().timer(backoff).await;
+            }
         });
         Ok(Self { updates, _server })
     }

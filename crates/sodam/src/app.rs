@@ -222,6 +222,10 @@ pub struct Root {
     /// 防止快速换歌时旧歌词请求回写。
     lyrics_request_seq: u64,
     pub search_input: String,
+    /// 搜索框插入点（字节下标，永远落在字符边界上）。
+    pub search_cursor: usize,
+    /// 搜索框文本区的窗口内 bounds：canvas 绘制时回填，鼠标点击定位用。
+    pub(crate) search_bounds: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     pub search_focus: FocusHandle,
     /// 窗口根元素的焦点。
     ///
@@ -448,6 +452,8 @@ impl Root {
             lyrics_scroll: gpui::UniformListScrollHandle::new(),
             lyrics_request_seq: 0,
             search_input: String::new(),
+            search_cursor: 0,
+            search_bounds: std::rc::Rc::new(std::cell::Cell::new(None)),
             search_focus: cx.focus_handle(),
             workspace_focus: cx.focus_handle(),
             shortcut_focus: cx.focus_handle(),
@@ -719,6 +725,60 @@ impl Root {
     }
 }
 
+impl Root {
+    /// 按当前 text style 把搜索框内容 shape 成一行。
+    ///
+    /// 光标位置和点击定位都用**同一条** ShapedLine 量，避免"自己估宽度"和
+    /// 实际渲染不一致导致的光标错位（sonora 的 Input 也是这么做的）。
+    fn search_shaped_line(&self, window: &Window) -> Option<gpui::ShapedLine> {
+        if self.search_input.is_empty() {
+            return None;
+        }
+        let style = window.text_style();
+        let run = gpui::TextRun {
+            len: self.search_input.len(),
+            font: style.font(),
+            color: style.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        Some(window.text_system().shape_line(
+            self.search_input.clone().into(),
+            style.font_size.to_pixels(window.rem_size()),
+            &[run],
+            None,
+        ))
+    }
+
+    /// 鼠标点击的窗口内 x → 最近的字符边界（字节下标）。
+    pub(crate) fn search_cursor_for_x(&self, x: gpui::Pixels, window: &Window) -> usize {
+        let Some(line) = self.search_shaped_line(window) else {
+            return 0;
+        };
+        // canvas 就铺在文本盒上，bounds.left 就是文本起点。
+        let origin = self
+            .search_bounds
+            .get()
+            .map(|bounds| bounds.origin.x)
+            .unwrap_or_else(|| gpui::px(0.0));
+        let local = x - origin;
+        if local <= gpui::px(0.0) {
+            return 0;
+        }
+        line.closest_index_for_x(local).min(self.search_input.len())
+    }
+
+    /// 插入点在输入框内的横向偏移。
+    pub(crate) fn search_caret_x(&self, window: &Window) -> gpui::Pixels {
+        let cursor = actions::clamp_cursor(&self.search_input, self.search_cursor);
+        match self.search_shaped_line(window) {
+            Some(line) => line.x_for_index(cursor),
+            None => gpui::px(0.0),
+        }
+    }
+}
+
 impl EntityInputHandler for Root {
     fn text_for_range(
         &mut self,
@@ -744,10 +804,10 @@ impl EntityInputHandler for Root {
         if !self.search_input_focused(window) {
             return None;
         }
-        let range = self
-            .search_marked_range
-            .clone()
-            .unwrap_or(self.search_input.len()..self.search_input.len());
+        // 有 IME 组合时返回组合区间，否则是插入点的折叠选区。
+        // 之前恒返回「末尾..末尾」，光标只能停在最后，方向键也就没有可动的余地。
+        let cursor = actions::clamp_cursor(&self.search_input, self.search_cursor);
+        let range = self.search_marked_range.clone().unwrap_or(cursor..cursor);
         Some(UTF16Selection {
             range: self.search_utf16_range_from_byte(range),
             reversed: false,
@@ -784,7 +844,9 @@ impl EntityInputHandler for Root {
             return;
         }
         let range = self.search_replacement_range(range_utf16);
+        let start = range.start;
         self.search_input.replace_range(range, text);
+        self.search_cursor = start + text.len();
         self.search_marked_range = None;
         cx.notify();
     }
@@ -804,6 +866,7 @@ impl EntityInputHandler for Root {
         let start = range.start;
         self.search_input.replace_range(range, new_text);
         let end = start + new_text.len();
+        self.search_cursor = end;
         self.search_marked_range = Some(start..end);
         cx.notify();
     }
@@ -820,14 +883,31 @@ impl EntityInputHandler for Root {
 
     fn character_index_for_point(
         &mut self,
-        _point: gpui::Point<gpui::Pixels>,
+        point: gpui::Point<gpui::Pixels>,
         window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         if !self.search_input_focused(window) {
             return None;
         }
-        Some(self.search_input.chars().map(char::len_utf16).sum())
+        // 语义是 UTF-16 偏移：按点击位置算出字节下标后再换算。
+        let byte = self.search_cursor_for_x(point.x, window);
+        Some(self.search_byte_to_utf16_offset(byte))
+    }
+
+    fn set_selected_text_range(
+        &mut self,
+        range_utf16: std::ops::Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.search_input_focused(window) {
+            return;
+        }
+        let byte = self.search_byte_range_from_utf16(range_utf16);
+        self.search_cursor = byte.start;
+        self.search_marked_range = None;
+        cx.notify();
     }
 
     fn text_length_utf16(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> Option<usize> {

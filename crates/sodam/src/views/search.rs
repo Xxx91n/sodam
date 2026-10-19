@@ -10,7 +10,7 @@ fn search_box(root: &Root, window: &Window, cx: &mut Context<Root>) -> impl Into
         root.tr("搜索歌曲 / 歌手（点这里后输入，回车搜索）")
             .to_string()
     } else {
-        format!("{}{}", root.search_input, if focused { "▌" } else { "" })
+        root.search_input.clone()
     };
     let color = if root.search_input.is_empty() {
         theme::text_muted()
@@ -41,20 +41,52 @@ fn search_box(root: &Root, window: &Window, cx: &mut Context<Root>) -> impl Into
         .cursor_text()
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(|root, _event, window, cx| {
+            cx.listener(|root, event: &MouseDownEvent, window, cx| {
                 window.focus(&root.search_focus, cx);
+                // 点哪儿就把插入点放哪儿（之前只聚焦，光标恒在末尾）。
+                let cursor = root.search_cursor_for_x(event.position.x, window);
+                root.search_set_cursor(cursor);
+                cx.notify();
             }),
         )
         .on_key_down(cx.listener(|root, event: &KeyDownEvent, _window, cx| {
             let key = event.keystroke.key.as_str();
             match key {
                 "enter" => root.run_search(cx),
+                // 编辑键都要落在真实的插入点上：之前 backspace 只会 pop 末尾、
+                // 左右方向键完全没处理，所以光标永远停在最后。
                 "backspace" => {
-                    let _ = root.search_input.pop();
+                    if root.search_backspace() {
+                        cx.notify();
+                    }
+                }
+                "delete" => {
+                    if root.search_delete_forward() {
+                        cx.notify();
+                    }
+                }
+                "left" => {
+                    if root.search_move_cursor(false) {
+                        cx.notify();
+                    }
+                }
+                "right" => {
+                    if root.search_move_cursor(true) {
+                        cx.notify();
+                    }
+                }
+                "home" => {
+                    root.search_set_cursor(0);
+                    cx.notify();
+                }
+                "end" => {
+                    let end = root.search_input.len();
+                    root.search_set_cursor(end);
                     cx.notify();
                 }
                 "escape" => {
                     root.search_input.clear();
+                    root.search_set_cursor(0);
                     cx.notify();
                 }
                 // 可打印字符（含 Fcitx 上屏）交给 EntityInputHandler；
@@ -63,20 +95,50 @@ fn search_box(root: &Root, window: &Window, cx: &mut Context<Root>) -> impl Into
             }
         }))
         .child(
-            canvas(
-                |_bounds, _window, _cx| {},
-                move |bounds, _state, window, cx| {
-                    window.handle_input(
-                        &input_focus,
-                        gpui::ElementInputHandler::new(bounds, input_entity.clone()),
-                        cx,
-                    );
-                },
-            )
-            .absolute()
-            .size_full(),
+            // 文本 + 光标放在同一个 relative 盒里：光标是一个真实的绝对定位元素，
+            // `left` 直接用 ShapedLine 的 `x_for_index(cursor)` 算出来，
+            // 和文本用的是同一条排版结果，不会错位。
+            div()
+                .id("search-text")
+                .relative()
+                .flex_1()
+                .min_w(px(0.0))
+                .overflow_hidden()
+                .child(text)
+                .when(focused, |this| {
+                    let caret_x = root.search_caret_x(window);
+                    this.child(
+                        div()
+                            .absolute()
+                            .left(caret_x)
+                            .top(px(4.0))
+                            .w(px(2.0))
+                            .h(px(18.0))
+                            .bg(theme::accent()),
+                    )
+                })
+                .child(
+                    canvas(
+                        {
+                            let bounds_cell = root.search_bounds.clone();
+                            move |bounds, _window, _cx| {
+                                // 记下文本区位置：鼠标点击要用它把 x 换算成字符下标。
+                                bounds_cell.set(Some(bounds));
+                                bounds
+                            }
+                        },
+                        move |bounds, _state, window, cx| {
+                            window.handle_input(
+                                &input_focus,
+                                gpui::ElementInputHandler::new(bounds, input_entity.clone()),
+                                cx,
+                            );
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                ),
         )
-        .child(text)
 }
 
 /// 数字缩写：官方搜索里的“2442.2万人关注”。

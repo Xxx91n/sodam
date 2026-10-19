@@ -3689,7 +3689,7 @@ dependencies = [
 [[package]]
 name = "libresoda"
 version = "0.1.0"
-source = "git+https://github.com/sodahub-org/libresoda.git?rev=928797d#928797d0cd30469c31b2b8fca4f460be88d248c6"
+source = "git+https://github.com/sodahub-org/libresoda.git?rev=8909b7f#8909b7f5a8b2d17b0184fb24b81b88d9577e13d5"
 dependencies = [
  "aes",
  "base64 0.22.1",

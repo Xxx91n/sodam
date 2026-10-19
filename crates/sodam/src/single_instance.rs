@@ -38,7 +38,10 @@ enum Backend {
         _listener: std::os::unix::net::UnixListener,
     },
     #[cfg(target_os = "windows")]
-    Mutex(WindowsMutex),
+    Mutex {
+        /// 只用来保持互斥体不被释放。
+        _handle: WindowsMutex,
+    },
     /// 平台不支持时的空实现（照常启动）。
     None,
 }
@@ -211,7 +214,9 @@ fn acquire_windows() -> Instance {
     let (_tx, rx) = std::sync::mpsc::channel();
     Instance::Primary {
         _guard: Guard {
-            _backend: Backend::Mutex(WindowsMutex(handle)),
+            _backend: Backend::Mutex {
+                _handle: WindowsMutex(handle),
+            },
         },
         activations: rx,
     }
@@ -245,12 +250,11 @@ fn focus_existing_window() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     /// 每个用例一个独立目录，避免并行测试互相抢同一个 socket。
-    #[cfg(unix)]
     fn temp_socket(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -263,7 +267,6 @@ mod tests {
     }
 
     /// 同一个 socket 路径：第一次拿到 Primary，第二次判定为 Secondary。
-    #[cfg(unix)]
     #[test]
     fn second_instance_is_secondary() {
         let path = temp_socket("second");
@@ -281,7 +284,6 @@ mod tests {
     }
 
     /// 崩溃残留的 socket 文件（没人 listen）不应把新进程挡在外面。
-    #[cfg(unix)]
     #[test]
     fn stale_socket_file_is_reclaimed() {
         let path = temp_socket("stale");
@@ -299,7 +301,6 @@ mod tests {
     }
 
     /// 第二个实例能通知到首实例（activations 收到一次）。
-    #[cfg(unix)]
     #[test]
     fn second_instance_signals_the_first() {
         let path = temp_socket("signal");

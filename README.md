@@ -290,6 +290,28 @@ sodam
 
 后续升级时，从 [Releases](https://github.com/sodahub-org/sodam/releases/latest) 下载新版本的对应架构包，并再次执行 `sudo pacman -U` 即可。
 
+### 方式二：自建 pacman 源（推荐，可直接升级）
+
+每次发版后 CI 会把官方构建的包重新打成 pacman 仓库并发布到 GitHub Pages，
+加上一行配置就能用 `pacman` 安装、随 `pacman -Syu` 升级：
+
+```ini
+# /etc/pacman.conf 末尾
+[sodam]
+SigLevel = Optional TrustAll
+Server = https://sodahub-org.github.io/sodam/$arch
+```
+
+```bash
+sudo pacman -Sy sodam          # 首次安装
+sudo pacman -Syu               # 之后随系统一起升级
+```
+
+仓库地址：<https://sodahub-org.github.io/sodam/>（含 `x86_64` 与 `aarch64`）。
+
+说明：包由 GitHub Actions 从源码构建，内容与 Release 里的 `.pkg.tar.zst` 一致，**未做 GPG 签名**，
+所以配置的是 `Optional TrustAll`；如需更严格校验请用上面的 `pacman -U` + `SHA256SUMS` 方式。
+
 ## macOS 下载安装（Apple Silicon）
 
 macOS 版已在 Apple Silicon（M 系列）真机实测。当前版本为

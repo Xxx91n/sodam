@@ -219,3 +219,15 @@ footer .row a:hover { color: var(--text); }
   .nav nav { gap: 14px; font-size: 13px; }
   .hero { padding: 46px 0 20px; }
 }
+
+/* 首屏关键词 */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+.chips span {
+  font-size: 13px;
+  color: #b8c7ca;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+.meta.subtle { color: #7d8a8e; font-size: 13px; margin-top: 8px; }

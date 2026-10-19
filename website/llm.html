@@ -14,7 +14,7 @@
   <div class="wrap nav">
     <a class="brand" href="index.html">
       <img src="assets/logo.svg" alt="SodaM">
-      <span>SodaM <small>汽水音乐桌面客户端</small></span>
+      <span>SodaM <small>汽水音乐第三方客户端</small></span>
     </a>
     <nav>
       <a href="install.html">安装</a>
@@ -52,7 +52,7 @@
 <pre id="llm-prompt">你是一名熟悉 Linux / macOS / Windows 的桌面软件安装助手，请帮我在**当前这台机器**上安装 SodaM 并验证它能正常启动。
 
 ## 关于 SodaM
-- 开源的汽水音乐桌面客户端，基于 GPUI + Rust 构建；仓库：https://github.com/sodahub-org/sodam
+- 汽水音乐的第三方桌面客户端（非官方），基于 GPUI + Rust 构建，强调高性能、低占用；仓库：https://github.com/sodahub-org/sodam
 - 官网安装说明：https://sodahub-org.github.io/sodam/install.html
 - 最新版本：<span data-version>—</span>（如果这里不是具体版本号，请以 GitHub Releases 页面显示的最新版为准）
 - Release 资产命名规则：
@@ -65,7 +65,7 @@
 1. 先检测我的系统与架构（uname -a / sw_vers / systeminfo，或等价命令），并报告结果。
 2. 按平台选择安装方式，**优先用包管理器**：
    - Arch Linux / Arch Linux ARM（有 pacman）：
-     推荐加官方维护的 pacman 源到 /etc/pacman.conf 末尾：
+     推荐加项目维护的 pacman 源到 /etc/pacman.conf 末尾：
          [sodam]
          SigLevel = Optional TrustAll
          Server = https://sodahub-org.github.io/sodam/$arch
@@ -77,7 +77,7 @@
    - Windows：
      下载 sodam-&lt;version&gt;-windows-x64-setup.exe，说明如何用 PowerShell 校验 SHA256、如何静默/交互安装，以及 SmartScreen 提示怎么处理。
    - 其它 Linux 发行版：
-     目前官方只发 pacman 包，请告诉我这一步需要从源码构建（Rust 1.85+，scripts/build.sh），先征求我同意再动手。
+     目前只发布 pacman 包，请告诉我这一步需要从源码构建（Rust 1.85+，scripts/build.sh），先征求我同意再动手。
 3. 每一步执行前先说明**你要运行什么、为什么**；涉及 sudo、修改系统配置、写入 /etc 的操作必须先让我确认。
 4. 安装完成后验证：
    - 检查包管理器里已注册（pacman -Qi sodam / brew list --cask sodam / 安装目录存在）

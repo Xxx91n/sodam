@@ -292,7 +292,7 @@ sodam
 
 ### 方式二：自建 pacman 源（推荐，可直接升级）
 
-每次发版后 CI 会把官方构建的包重新打成 pacman 仓库并发布到 GitHub Pages，
+每个版本会把官方构建的包打成 pacman 仓库并发布到 GitHub Pages，
 加上一行配置就能用 `pacman` 安装、随 `pacman -Syu` 升级：
 
 ```ini

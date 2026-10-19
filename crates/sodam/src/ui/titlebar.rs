@@ -7,10 +7,16 @@
 //!
 //! 命中匹配取「第一个包含光标的 hitbox」，因此按钮必须与拖拽区是
 //! 兄弟节点，不能嵌套 —— 否则拖拽区先匹配，按钮会失效。
+//! Linux（Wayland 会话）下 gpui 只能提供客户端装饰，系统不会画标题栏；而
+//! `on_hit_test_window_control` 在 Linux 后端是空实现，`window_control_area`
+//! 不生效。因此 Linux 下按钮点击与标题栏拖拽由本模块直接调用窗口 API 处理。
+//!
 //! macOS 走系统红绿灯，不使用本组件。
 
 use gpui::prelude::*;
-use gpui::{div, hsla, px, svg, Div, Hsla, WindowControlArea};
+#[cfg(target_os = "linux")]
+use gpui::MouseButton;
+use gpui::{div, hsla, px, svg, Div, Hsla, Window, WindowControlArea};
 
 use crate::ui::{icons, theme};
 
@@ -26,7 +32,21 @@ const CLOSE_HOVER: Hsla = hsla(4.0 / 360.0, 0.83, 0.49, 1.0);
 /// 覆盖在窗口顶部，不占布局高度：侧边栏/内容列各自为控件留出空间，
 /// 背景仍延伸到标题栏下方，避免独立标题栏横条与面板之间出现色差。
 /// 左侧全部为拖拽区，右侧是三个窗口控制按钮。
-pub fn render() -> Div {
+pub fn render(window: &Window) -> Div {
+    render_with_maximize_icon(maximize_icon(window.is_maximized()))
+}
+
+/// 最大化后按钮换成「还原」图标，和系统窗口的语义一致。
+fn maximize_icon(is_maximized: bool) -> &'static str {
+    if is_maximized {
+        "restore"
+    } else {
+        "square"
+    }
+}
+
+/// 与真实 `Window` 解耦：单测不必构造平台窗口，也能覆盖普通/最大化两条分支。
+fn render_with_maximize_icon(maximize_icon: &'static str) -> Div {
     div()
         .absolute()
         .top(px(0.0))
@@ -46,7 +66,7 @@ pub fn render() -> Div {
         ))
         .child(caption_button(
             "titlebar-max",
-            "square",
+            maximize_icon,
             WindowControlArea::Max,
             false,
         ))
@@ -59,11 +79,24 @@ pub fn render() -> Div {
 }
 
 fn drag_area() -> impl IntoElement {
-    div()
+    let area = div()
         .id("titlebar-drag")
         .flex_1()
         .h_full()
-        .window_control_area(WindowControlArea::Drag)
+        .window_control_area(WindowControlArea::Drag);
+
+    // Linux 后端不处理控制区：拖拽要自己交给合成器，双击标题栏则等同于
+    // 最大化/还原（Windows 由 WM_NCHITTEST 的 HTCAPTION 双击处理）。
+    #[cfg(target_os = "linux")]
+    let area = area.on_mouse_down(MouseButton::Left, |event, window, _| {
+        if event.click_count >= 2 {
+            window.zoom_window();
+        } else {
+            window.start_window_move();
+        }
+    });
+
+    area
 }
 
 fn caption_button(
@@ -95,6 +128,16 @@ fn caption_button(
                 }),
         );
 
+    // Windows 由 WM_NCHITTEST 把控制区映射成 HTMINBUTTON 等消息；Linux 后端
+    // 不处理控制区，这里直接调用窗口 API，避免两个平台各点一次。
+    #[cfg(target_os = "linux")]
+    let base = base.on_click(move |_, window, _| match area {
+        WindowControlArea::Min => window.minimize_window(),
+        WindowControlArea::Max => window.zoom_window(),
+        WindowControlArea::Close => window.remove_window(),
+        _ => {}
+    });
+
     if danger {
         base.hover(|style| style.bg(CLOSE_HOVER))
     } else {
@@ -108,12 +151,23 @@ mod tests {
 
     #[test]
     fn titlebar_overlays_panel_backgrounds_without_its_own_fill() {
-        let mut titlebar = render();
+        let mut titlebar = render_with_maximize_icon(maximize_icon(false));
         let style = titlebar.style();
         assert_eq!(style.position, Some(gpui::Position::Absolute));
         assert_eq!(style.inset.top, Some(px(0.0).into()));
         assert_eq!(style.inset.left, Some(px(0.0).into()));
         assert_eq!(style.size.height, Some(px(STRIP_HEIGHT).into()));
         assert!(style.background.is_none());
+    }
+
+    #[test]
+    fn maximize_button_switches_to_restore_icon() {
+        assert_eq!(maximize_icon(false), "square");
+        assert_eq!(maximize_icon(true), "restore");
+        // 两条分支都必须能构建出同高度的覆盖层。
+        for icon in ["square", "restore"] {
+            let mut titlebar = render_with_maximize_icon(icon);
+            assert_eq!(titlebar.style().size.height, Some(px(STRIP_HEIGHT).into()));
+        }
     }
 }

@@ -130,6 +130,7 @@ icon_set!(
     "x",
     "minus",
     "square",
+    "restore",
     "disc-3",
     "check",
 );
@@ -192,6 +193,16 @@ mod tests {
             .load(&path("check"))
             .expect("check asset load")
             .expect("check SVG bytes");
+        assert!(bytes.starts_with(b"<svg"));
+    }
+
+    /// 最大化后标题栏换成 `restore` 图标；未注册时 svg 会静默不渲染。
+    #[test]
+    fn restore_icon_is_registered() {
+        let bytes = Assets
+            .load(&path("restore"))
+            .expect("restore asset load")
+            .expect("restore SVG bytes");
         assert!(bytes.starts_with(b"<svg"));
     }
 

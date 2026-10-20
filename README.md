@@ -463,6 +463,8 @@ sudo pacman -U ./sodam-<version>-<arch>.pkg.tar.zst
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：分层、线程、播放与导航架构
 - [`docs/UI-SPEC.md`](docs/UI-SPEC.md)：主题、布局、尺寸与性能约束
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)：已完成能力与后续优先级
+- [`docs/TRAY-CLICK-SPEC.md`](docs/TRAY-CLICK-SPEC.md)：托盘左/右键交互与唤起规范
+- [`docs/adr/0001-tray-click-platform-conventions.md`](docs/adr/0001-tray-click-platform-conventions.md)：托盘点击的平台差异决策
 
 ## 许可与合规
 

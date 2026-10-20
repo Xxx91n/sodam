@@ -1,9 +1,10 @@
-; SodaM Windows installer script (Inno Setup 6).
+﻿; SodaM Windows installer script (Inno Setup 6).
 ; Build (from repo root):
 ;   ISCC.exe /DMyAppVersion=<version> packaging/windows/sodam.iss
 ; Output: release/sodam-<version>-windows-x64-setup.exe
 ; Per-user install (no admin required), default dir {localappdata}\Programs\SodaM.
-; NOTE: keep this file ASCII-only; Inno reads non-BOM files in the ANSI codepage.
+; NOTE: this file is UTF-8 with BOM: it carries Simplified Chinese messages below,
+; and Inno reads a non-BOM script in the ANSI codepage.
 
 #define MyAppName "SodaM"
 #ifndef MyAppVersion
@@ -29,6 +30,15 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\sodam.exe
 CloseApplications=force
 RestartApplications=no
+ShowLanguageDialog=no
+UsePreviousLanguage=no
+
+; English is listed first: it is the fallback for any system display language
+; that is not Simplified Chinese (detection order is full LCID, then primary
+; language, then the first entry here).
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -45,6 +55,13 @@ Filename: "{app}\sodam.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Fla
 
 [Messages]
 DontCloseApplications=&Cancel installation
+chinesesimplified.DontCloseApplications=取消安装(&C)
+
+[CustomMessages]
+SodamStillRunning=Unable to close SodaM. Quit it from the tray menu (or end sodam.exe in Task Manager), then run Setup again.
+SodamCancelled=Installation cancelled. SodaM was not closed.
+chinesesimplified.SodamStillRunning=无法关闭 SodaM，安装已中止。请从托盘菜单退出 SodaM（必要时在任务管理器中结束 sodam.exe），然后重新运行安装程序。
+chinesesimplified.SodamCancelled=安装已取消，SodaM 未被关闭。
 
 [Code]
 const
@@ -52,8 +69,6 @@ const
   OPEN_EXISTING = 3;
   ERROR_SHARING_VIOLATION = 32;
   INVALID_HANDLE_VALUE = -1;
-  StillRunningMsg = 'Unable to close SodaM. Quit it from the tray menu (or end sodam.exe in Task Manager), then run Setup again.';
-  CancelledMsg = 'Installation cancelled. SodaM was not closed.';
 
 var
   SodamPromptShown: Boolean;
@@ -91,7 +106,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
   if WizardSilent and SodamExeRunning then
-    Result := StillRunningMsg;
+    Result := CustomMessage('SodamStillRunning');
 end;
 
 procedure StopSodamProcess;
@@ -121,7 +136,7 @@ begin
     StopSodamProcess;
     if SodamExeRunning then
     begin
-      MsgBox(StillRunningMsg, mbError, MB_OK);
+      MsgBox(CustomMessage('SodamStillRunning'), mbError, MB_OK);
       Result := False;
     end;
   end;
@@ -138,7 +153,7 @@ begin
   if (CurStep = ssInstall) and SodamPromptShown and
      (not WizardForm.PreparingYesRadio.Checked) and SodamExeRunning then
   begin
-    MsgBox(CancelledMsg, mbError, MB_OK);
+    MsgBox(CustomMessage('SodamCancelled'), mbError, MB_OK);
     Abort;
   end;
 end;
@@ -147,7 +162,7 @@ procedure SodamBeforeInstall;
 begin
   if SodamExeRunning then
   begin
-    MsgBox(StillRunningMsg, mbError, MB_OK);
+    MsgBox(CustomMessage('SodamStillRunning'), mbError, MB_OK);
     Abort;
   end;
 end;

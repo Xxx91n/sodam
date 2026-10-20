@@ -138,14 +138,14 @@ scripts/run.sh     # 启动 GUI（带 MemoryMax 护栏，编译时不要跑）</
     </ol>
     <div class="code">
       <header><span>发版</span><button class="copy" data-copy="self">复制</button></header>
-      <pre>git tag -a v0.3.3 -F changelog.txt
+      <pre>git tag -a v0.3.4 -F changelog.txt
 git push origin main
-git push origin v0.3.3</pre>
+git push origin v0.3.4</pre>
     </div>
     <p>CI 会构建四平台产物、创建 GitHub Release，然后自动重建 pacman 源并部署本官网。</p>
     <ul>
       <li>发布后把 macOS zip 的 sha256 同步到 <code>packaging/homebrew/sodam.rb</code> 与 homebrew-tap 仓库。</li>
-      <li>pacman 源需要补跑时：<code>gh workflow run pages.yml -f tag=v0.3.3</code>。</li>
+      <li>pacman 源需要补跑时：<code>gh workflow run pages.yml -f tag=v0.3.4</code>。</li>
     </ul>
   </section>
 

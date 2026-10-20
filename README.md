@@ -445,6 +445,8 @@ if ($expected -ne $actual) { throw "SHA256 mismatch!" } else { "SHA256 OK" }
 
 - 默认安装目录 `%LOCALAPPDATA%\Programs\SodaM`
 - 自动创建开始菜单快捷方式，可选创建桌面快捷方式
+- 如果 SodaM 正在运行（包括已关闭到托盘），安装器会提示关闭；确认后强制关闭并继续，取消则退出安装
+- 如果无法自动关闭（例如 SodaM 以管理员身份运行），安装器会中止并提示先从托盘菜单退出后重试
 
 ### 3. 首次启动（SmartScreen 提示）
 
@@ -457,6 +459,8 @@ if ($expected -ne $actual) { throw "SHA256 mismatch!" } else { "SHA256 OK" }
 ### 卸载
 
 在「设置 → 应用」或「控制面板 → 程序和功能」中卸载 SodaM。
+
+卸载前请先从主窗口或托盘菜单退出 SodaM；卸载器不会自动关闭正在运行的实例。
 
 ## 打包
 
@@ -479,6 +483,9 @@ sudo pacman -U ./sodam-<version>-<arch>.pkg.tar.zst
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：分层、线程、播放与导航架构
 - [`docs/UI-SPEC.md`](docs/UI-SPEC.md)：主题、布局、尺寸与性能约束
 - [`docs/ROADMAP.md`](docs/ROADMAP.md)：已完成能力与后续优先级
+- [`docs/TRAY-CLICK-SPEC.md`](docs/TRAY-CLICK-SPEC.md)：托盘左/右键交互与唤起规范
+- [`docs/WINDOWS-INSTALLER-SPEC.md`](docs/WINDOWS-INSTALLER-SPEC.md)：Windows 安装器在 SodaM 运行中的关闭、失败与静默策略
+- [`docs/adr/0001-tray-click-platform-conventions.md`](docs/adr/0001-tray-click-platform-conventions.md)：托盘点击的平台差异决策
 
 ## 许可与合规
 

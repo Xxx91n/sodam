@@ -19,6 +19,7 @@
 - [x] 虚拟列表、图片并发池、帧耗时与滚动压测工具
 - [x] 中英文界面、系统托盘、关闭到托盘
 - [x] Arch Linux ARM64 打包与桌面入口
+- [x] GitHub Actions CI 矩阵与 Linux / macOS / Windows Release 打包
 
 ## 近期优先级
 
@@ -56,8 +57,8 @@
 - [ ] 配置文件版本迁移
 - [ ] 干净机器安装测试
 - [ ] x86_64 Linux 包验证
-- [ ] macOS / Windows 支持评估
-- [ ] 自动化 CI（带资源护栏）
+- [ ] Windows 安装器在 SodaM 运行中安装/升级的处理（规范见 `docs/WINDOWS-INSTALLER-SPEC.md`）
+- [x] 自动化 CI（带资源护栏）
 
 ### 6. 登录与账号
 

@@ -68,10 +68,19 @@ SodaM 是**汽水音乐的第三方桌面客户端**，面向 Linux / macOS / Wi
         Contributor
       </a>
     </td>
+  </tr>
+  <tr>
     <td align="center">
       <a href="https://github.com/Xxx91n">
         <img src="https://avatars.githubusercontent.com/u/238613278?v=4" width="72" alt="Xxx91n"><br />
         <strong>Xxx91n</strong><br />
+        Contributor
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/BranchCrypto">
+        <img src="https://avatars.githubusercontent.com/u/182780352?v=4" width="72" alt="BranchCrypto"><br />
+        <strong>BranchCrypto</strong><br />
         Contributor
       </a>
     </td>

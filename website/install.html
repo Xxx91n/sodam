@@ -115,6 +115,7 @@ brew upgrade --cask sodam</pre>
       <li>双击运行，按向导完成安装（默认目录 <code>%LOCALAPPDATA%\Programs\SodaM</code>）。</li>
       <li>首次运行若弹「Windows 已保护你的电脑」：点「更多信息」→「仍要运行」（安装包未做代码签名）。</li>
     </ol>
+    <p class="lead-inline">如果 SodaM 正在运行（包括已关闭到托盘），安装器会提示关闭；确认后继续，取消则退出安装。若无法自动关闭（例如以管理员身份运行），请先从托盘菜单退出后重试。</p>
     <p class="lead-inline">配置保存在 <code>%APPDATA%\sodam\config.json</code>，覆盖安装不会丢失。</p>
   </section>
 
@@ -142,10 +143,13 @@ if ($expected -eq $actual) { "SHA256 OK" } else { throw "SHA256 mismatch" }</pre
         <tbody>
           <tr><td>Arch Linux</td><td><code>sudo pacman -Rns sodam</code>（从 pacman.conf 里删掉 <code>[sodam]</code> 段即为断开源）</td></tr>
           <tr><td>macOS</td><td><code>brew uninstall --cask --zap sodam</code>，或把 app 拖进废纸篓</td></tr>
-          <tr><td>Windows</td><td>设置 → 应用 → SodaM → 卸载</td></tr>
+          <tr><td>Windows</td><td>设置 → 应用 → SodaM → 卸载（先从前台或托盘退出 SodaM）</td></tr>
         </tbody>
       </table>
     </div>
+    <p class="lead-inline">
+      Windows 卸载前请先从主窗口或托盘菜单退出 SodaM；卸载器不会自动关闭正在运行的实例。
+    </p>
     <p class="lead-inline">
       配置与缓存目录：Linux <code>~/.config/sodam</code> / <code>~/.cache/sodam</code>，
       macOS <code>~/Library/Application Support/sodam</code>，Windows <code>%APPDATA%\sodam</code>。

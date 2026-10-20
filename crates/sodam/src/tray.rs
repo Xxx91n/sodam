@@ -27,6 +27,89 @@ pub enum TrayCommand {
     Quit,
 }
 
+/// 托盘点击的平台差异收敛在这里，便于三端单测。
+///
+/// Linux 走 SNI 的 `activate`，不经过 `tray-icon`；macOS/Windows 共用
+/// `create_status_item`，但只有 Windows 把左键从菜单里拿出来。
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+#[allow(dead_code)]
+mod semantics {
+    use super::TrayCommand;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Platform {
+        Windows,
+        Macos,
+        Linux,
+    }
+
+    impl Platform {
+        pub(super) const fn current() -> Self {
+            #[cfg(target_os = "windows")]
+            {
+                Self::Windows
+            }
+            #[cfg(target_os = "macos")]
+            {
+                Self::Macos
+            }
+            #[cfg(target_os = "linux")]
+            {
+                Self::Linux
+            }
+        }
+
+        /// macOS 的菜单栏图标保持系统惯例：左键打开菜单。
+        pub(super) const fn menu_on_left_click(self) -> bool {
+            matches!(self, Self::Macos)
+        }
+
+        /// Windows/Linux 左键单击聚焦/唤起主窗口。
+        #[cfg(any(target_os = "windows", test))]
+        pub(super) const fn left_click_focuses_window(self) -> bool {
+            matches!(self, Self::Windows | Self::Linux)
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum ClickButton {
+        Left,
+        Right,
+        Middle,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum ClickState {
+        Up,
+        Down,
+    }
+
+    /// 只认左键抬起：按下不重复触发，右键/中键永远不负责开窗。
+    #[cfg(any(target_os = "windows", test))]
+    pub(super) fn command_for_click(button: ClickButton, state: ClickState) -> Option<TrayCommand> {
+        if state != ClickState::Up {
+            return None;
+        }
+        match button {
+            ClickButton::Left => Some(TrayCommand::Show),
+            ClickButton::Right | ClickButton::Middle => None,
+        }
+    }
+
+    /// 菜单 ID → 命令。保留原有菜单项，不因左键接管而删减。
+    pub(super) fn command_for_menu_id(id: &str) -> Option<TrayCommand> {
+        match id {
+            // 点了「正在播放」那行就把主窗口叫出来（没有曲目详情页可跳）。
+            "caption" | "show" => Some(TrayCommand::Show),
+            "toggle" => Some(TrayCommand::Toggle),
+            "prev" => Some(TrayCommand::Previous),
+            "next" => Some(TrayCommand::Next),
+            "quit" => Some(TrayCommand::Quit),
+            _ => None,
+        }
+    }
+}
+
 /// 从 Root 周期同步到托盘的播放状态摘要。
 #[derive(Debug, Clone)]
 pub struct TrayState {
@@ -267,6 +350,8 @@ pub fn create_status_item(
     use tray_icon::menu::accelerator::Accelerator;
     use tray_icon::menu::{IconMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
+    #[cfg(target_os = "windows")]
+    use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 
     let text = |key: &'static str| language.text(key).to_string();
     // 顶部那行「封面 + 艺人 – 曲名」：不参与动作，点了就开主窗口。
@@ -309,22 +394,49 @@ pub fn create_status_item(
         .with_icon(icon)
         .with_icon_as_template(cfg!(target_os = "macos"))
         .with_menu(Box::new(menu))
-        .with_menu_on_left_click(true)
+        // macOS 保持“左键开菜单”；Windows 把左键留给“聚焦/唤起主窗口”。
+        .with_menu_on_left_click(semantics::Platform::current().menu_on_left_click())
         .with_tooltip("SodaM")
         .build()
         .expect("创建 macOS 托盘不应失败");
 
+    // Windows 的左键点击通过 TrayIconEvent 单独接出来；macOS 不注册，
+    // 继续由 NSStatusItem 的菜单接管左键。
+    #[cfg(target_os = "windows")]
+    let click_tx = tx.clone();
+
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        let command = match event.id().as_ref() {
-            // 点了「正在播放」那行就把主窗口叫出来（没有曲目详情页可跳）。
-            "caption" | "show" => TrayCommand::Show,
-            "toggle" => TrayCommand::Toggle,
-            "prev" => TrayCommand::Previous,
-            "next" => TrayCommand::Next,
-            "quit" => TrayCommand::Quit,
-            _ => return,
+        if let Some(command) = semantics::command_for_menu_id(event.id().as_ref()) {
+            let _ = tx.send(command);
+        }
+    }));
+
+    #[cfg(target_os = "windows")]
+    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+        // Linux 不经过这里；macOS 没有注册这个 handler。
+        if !semantics::Platform::current().left_click_focuses_window() {
+            return;
+        }
+        let TrayIconEvent::Click {
+            button,
+            button_state,
+            ..
+        } = event
+        else {
+            return;
         };
-        let _ = tx.send(command);
+        let button = match button {
+            MouseButton::Left => semantics::ClickButton::Left,
+            MouseButton::Right => semantics::ClickButton::Right,
+            MouseButton::Middle => semantics::ClickButton::Middle,
+        };
+        let state = match button_state {
+            MouseButtonState::Up => semantics::ClickState::Up,
+            MouseButtonState::Down => semantics::ClickState::Down,
+        };
+        if let Some(command) = semantics::command_for_click(button, state) {
+            let _ = click_tx.send(command);
+        }
     }));
 
     // 封面每 500ms 会被同步一次，按源路径缓存解码结果。
@@ -375,4 +487,64 @@ fn cover_icon(path: &std::path::Path) -> Option<tray_icon::menu::Icon> {
         .into_rgba8();
     let (width, height) = image.dimensions();
     tray_icon::menu::Icon::from_rgba(image.into_raw(), width, height).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::semantics::{
+        command_for_click, command_for_menu_id, ClickButton, ClickState, Platform,
+    };
+    use super::TrayCommand;
+
+    // D-001 / D-002：Windows/Linux 左键聚焦，macOS 左键保持菜单。
+    #[test]
+    fn windows_left_click_focuses_window() {
+        assert!(Platform::Windows.left_click_focuses_window());
+        assert!(!Platform::Windows.menu_on_left_click());
+        assert_eq!(
+            command_for_click(ClickButton::Left, ClickState::Up),
+            Some(TrayCommand::Show)
+        );
+    }
+
+    #[test]
+    fn macos_left_click_keeps_menu() {
+        assert!(!Platform::Macos.left_click_focuses_window());
+        assert!(Platform::Macos.menu_on_left_click());
+    }
+
+    #[test]
+    fn linux_left_click_focuses_window() {
+        assert!(Platform::Linux.left_click_focuses_window());
+    }
+
+    // D-002：只有左键抬起开窗；右键/中键、按下、重复点击都不改变语义。
+    #[test]
+    fn only_left_button_up_opens_window() {
+        for button in [ClickButton::Right, ClickButton::Middle] {
+            assert_eq!(command_for_click(button, ClickState::Up), None);
+            assert_eq!(command_for_click(button, ClickState::Down), None);
+        }
+        assert_eq!(command_for_click(ClickButton::Left, ClickState::Down), None);
+        assert_eq!(
+            command_for_click(ClickButton::Left, ClickState::Up),
+            Some(TrayCommand::Show)
+        );
+        assert_eq!(
+            command_for_click(ClickButton::Left, ClickState::Up),
+            Some(TrayCommand::Show)
+        );
+    }
+
+    // D-003：菜单入口不因左键接管而删减。
+    #[test]
+    fn menu_entries_keep_existing_commands() {
+        assert_eq!(command_for_menu_id("caption"), Some(TrayCommand::Show));
+        assert_eq!(command_for_menu_id("show"), Some(TrayCommand::Show));
+        assert_eq!(command_for_menu_id("toggle"), Some(TrayCommand::Toggle));
+        assert_eq!(command_for_menu_id("prev"), Some(TrayCommand::Previous));
+        assert_eq!(command_for_menu_id("next"), Some(TrayCommand::Next));
+        assert_eq!(command_for_menu_id("quit"), Some(TrayCommand::Quit));
+        assert_eq!(command_for_menu_id("unknown"), None);
+    }
 }

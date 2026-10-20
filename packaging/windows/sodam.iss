@@ -1,9 +1,9 @@
-; SodaM Windows installer script (Inno Setup 6).
+﻿; SodaM Windows installer script (Inno Setup 6).
 ; Build (from repo root):
 ;   ISCC.exe /DMyAppVersion=<version> packaging/windows/sodam.iss
 ; Output: release/sodam-<version>-windows-x64-setup.exe
 ; Per-user install (no admin required), default dir {localappdata}\Programs\SodaM.
-; NOTE: keep this file ASCII-only; Inno reads non-BOM files in the ANSI codepage.
+; NOTE: this file is UTF-8 with BOM because the close prompt is bilingual.
 
 #define MyAppName "SodaM"
 #ifndef MyAppVersion
@@ -27,7 +27,8 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\sodam.exe
-CloseApplications=yes
+CloseApplications=force
+RestartApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -41,3 +42,63 @@ Name: "{autodesktop}\SodaM"; Filename: "{app}\sodam.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\sodam.exe"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Messages]
+ApplicationsFound=SodaM 正在运行，安装程序需要关闭它才能继续。%nSodaM is running. Setup must close it to continue.
+ApplicationsFound2=SodaM 正在运行，安装程序需要关闭它才能继续。%nSodaM is running. Setup must close it to continue.
+CloseApplications=&关闭 SodaM 并继续 / Close SodaM and continue
+DontCloseApplications=&取消安装 / Cancel installation
+ErrorCloseApplications=无法关闭 SodaM，安装无法继续。%n请从托盘菜单退出 SodaM（必要时用任务管理器结束 sodam.exe），然后点击“重试”。%n%nUnable to close SodaM. Installation cannot continue. Quit it from the tray menu (or end sodam.exe in Task Manager), then click "Try again".
+
+[CustomMessages]
+SodamStillRunning=无法关闭 SodaM，安装已中止。%n请从托盘菜单退出 SodaM（必要时用任务管理器结束 sodam.exe），然后重新运行安装程序。%n%nUnable to close SodaM. Installation was aborted. Quit it from the tray menu (or end sodam.exe in Task Manager), then run Setup again.
+
+[Code]
+const
+  GENERIC_WRITE = $40000000;
+  OPEN_EXISTING = 3;
+  ERROR_SHARING_VIOLATION = 32;
+  INVALID_HANDLE_VALUE = THandle(-1);
+
+function CreateFileW(lpFileName: String; dwDesiredAccess: Cardinal;
+  dwShareMode: Cardinal; lpSecurityAttributes: Cardinal;
+  dwCreationDisposition: Cardinal; dwFlagsAndAttributes: Cardinal;
+  hTemplateFile: THandle): THandle;
+  external 'CreateFileW@kernel32.dll stdcall delayload';
+
+function CloseHandle(hObject: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall delayload';
+
+function SodamExeRunning: Boolean;
+var
+  H: THandle;
+  ExePath: String;
+begin
+  Result := False;
+  ExePath := ExpandConstant('{app}\sodam.exe');
+  if not FileExists(ExePath) then
+    Exit;
+
+  H := CreateFileW(ExePath, GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0, 0);
+  if H = INVALID_HANDLE_VALUE then
+    Result := (DLLGetLastError = ERROR_SHARING_VIOLATION)
+  else
+  begin
+    CloseHandle(H);
+    Result := False;
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if WizardSilent and SodamExeRunning then
+    Result := CustomMessage('SodamStillRunning');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+    if SodamExeRunning then
+      RaiseException(CustomMessage('SodamStillRunning'));
+end;

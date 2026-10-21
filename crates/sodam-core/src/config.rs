@@ -28,6 +28,10 @@ pub struct Settings {
     pub volume_before_mute: f32,
     /// 音频磁盘缓存上限（MiB），默认 10 GiB，设置页可调整。
     pub audio_cache_limit_mb: u64,
+    /// 是否保存搜索框历史；关闭时同时清空已有记录。
+    pub search_history_enabled: bool,
+    /// 最近搜索词（最近在前，最多 10 条，仅保存在本机）。
+    pub search_history: Vec<String>,
     /// 界面主题：`dark` / `light`；空 = 第一次启动跟随系统偏好。
     pub theme: String,
     /// 界面语言：`zh` / `en`；空或 `auto` = 跟随系统语言。
@@ -144,6 +148,8 @@ impl Default for Settings {
             volume: 1.0,
             volume_before_mute: 1.0,
             audio_cache_limit_mb: crate::cache::DEFAULT_AUDIO_LIMIT_MB,
+            search_history_enabled: true,
+            search_history: Vec::new(),
             theme: String::new(),
             language: String::new(),
             titlebar: String::new(),
@@ -179,6 +185,7 @@ impl Settings {
         };
         let (mut settings, migrated) = settings.migrated();
         settings.normalize_playback();
+        settings.normalize_search_history();
         // 迁移后立刻落盘：用户下次打开配置文件看到的、以及设置页显示的，都是真正生效的那份。
         // 写失败不影响启动，内存里的值已经是迁移后的。
         if migrated {
@@ -241,6 +248,72 @@ impl Settings {
                 1.0
             };
         self.audio_cache_limit_mb = self.audio_cache_limit_mb.clamp(1024, 1024 * 1024);
+    }
+
+    /// 搜索历史最多保留 10 条；去空白、去重，最近搜索保持在前。
+    pub const SEARCH_HISTORY_LIMIT: usize = 10;
+
+    pub fn search_history_is_enabled(&self) -> bool {
+        self.search_history_enabled
+    }
+
+    pub fn record_search(&mut self, query: &str) -> bool {
+        if !self.search_history_enabled {
+            return false;
+        }
+        let query = query.trim();
+        if query.is_empty() {
+            return false;
+        }
+        let before = self.search_history.clone();
+        self.search_history.retain(|item| item != query);
+        self.search_history.insert(0, query.to_string());
+        self.search_history.truncate(Self::SEARCH_HISTORY_LIMIT);
+        self.search_history != before
+    }
+
+    pub fn clear_search_history(&mut self) {
+        self.search_history.clear();
+    }
+
+    pub fn remove_search_history(&mut self, index: usize) -> bool {
+        if index >= self.search_history.len() {
+            return false;
+        }
+        self.search_history.remove(index);
+        true
+    }
+
+    pub fn set_search_history_enabled(&mut self, enabled: bool) -> bool {
+        if self.search_history_enabled == enabled {
+            return false;
+        }
+        self.search_history_enabled = enabled;
+        if !enabled {
+            self.search_history.clear();
+        }
+        true
+    }
+
+    fn normalize_search_history(&mut self) {
+        if !self.search_history_enabled {
+            self.search_history.clear();
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.search_history = self
+            .search_history
+            .drain(..)
+            .filter_map(|item| {
+                let item = item.trim().to_string();
+                if item.is_empty() || !seen.insert(item.clone()) {
+                    None
+                } else {
+                    Some(item)
+                }
+            })
+            .take(Self::SEARCH_HISTORY_LIMIT)
+            .collect();
     }
 
     pub fn set_volume(&mut self, volume: f32) {
@@ -316,6 +389,8 @@ mod tests {
         let mut settings: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(settings.volume, 1.0);
         assert_eq!(settings.audio_cache_limit_mb, 10 * 1024);
+        assert!(settings.search_history_is_enabled());
+        assert!(settings.search_history.is_empty());
         settings.set_volume(0.31);
         settings.toggle_mute();
         settings.toggle_mute();
@@ -329,6 +404,42 @@ mod tests {
         assert_eq!(settings.volume, 0.0);
         assert_eq!(settings.volume_before_mute, 1.0);
         assert_eq!(settings.audio_cache_limit_mb, 1024 * 1024);
+    }
+
+    #[test]
+    fn search_history_deduplicates_and_keeps_ten_recent_entries() {
+        let mut settings = Settings::default();
+        for index in 0..12 {
+            assert!(settings.record_search(&format!(" query-{index} ")));
+        }
+        assert_eq!(settings.search_history.len(), 10);
+        assert_eq!(settings.search_history[0], "query-11");
+        assert_eq!(settings.search_history[9], "query-2");
+
+        assert!(settings.record_search("query-5"));
+        assert_eq!(settings.search_history[0], "query-5");
+        assert_eq!(
+            settings
+                .search_history
+                .iter()
+                .filter(|item| item.as_str() == "query-5")
+                .count(),
+            1
+        );
+        assert!(!settings.record_search("   "));
+    }
+
+    #[test]
+    fn disabling_search_history_clears_and_stops_recording() {
+        let mut settings = Settings::default();
+        settings.record_search("first");
+        assert!(settings.set_search_history_enabled(false));
+        assert!(settings.search_history.is_empty());
+        assert!(!settings.record_search("second"));
+        assert!(!settings.set_search_history_enabled(false));
+        assert!(settings.set_search_history_enabled(true));
+        assert!(settings.record_search("third"));
+        assert_eq!(settings.search_history, vec!["third"]);
     }
 
     #[test]

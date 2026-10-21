@@ -414,6 +414,16 @@ impl Language {
             "连续 3 首拉流失败，已暂停（检查网络或签名服务）" => "Paused after 3 stream failures. Check network or signer.",
             "保存失败：{err}" => "Save failed: {err}",
             "先输入关键词再回车" => "Type a keyword and press Enter",
+            "搜索历史" => "Search History",
+            "仅保存在本机，最多保留 10 条；关闭后会清空记录" => {
+                "Stored only on this device. Keeps up to 10 entries. Turning it off clears the history."
+            }
+            "保存搜索历史" => "Save search history",
+            "已保存 {} 条搜索历史" => "{} saved searches",
+            "搜索历史已清空" => "Search history cleared",
+            "搜索历史已开启" => "Search history enabled",
+            "搜索历史已关闭，记录已清空" => "Search history disabled; history cleared",
+            "清空" => "Clear",
             "正在搜索「{}」…" => "Searching “{}”…",
             "「{}」共 {} 条结果" => "“{}”: {} results",
             "搜索失败：{err}" => "Search failed: {err}",

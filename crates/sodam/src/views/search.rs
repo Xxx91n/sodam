@@ -173,6 +173,110 @@ fn compact_number(value: i64, language: crate::ui::i18n::Language) -> String {
     }
 }
 
+/// 搜索框聚焦且输入为空时的本机搜索历史。
+fn search_history_panel(root: &Root, cx: &mut Context<Root>) -> AnyElement {
+    let chips = root
+        .settings
+        .search_history
+        .iter()
+        .enumerate()
+        .map(|(index, query)| {
+            let select_query = query.clone();
+            let remove_query = query.clone();
+            div()
+                .id(("search-history-chip", index))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(theme::space::XS))
+                .px(px(theme::space::MD))
+                .py(px(theme::space::XS))
+                .rounded(px(theme::radius::PILL))
+                .bg(theme::surface_hover())
+                .max_w(px(240.0))
+                .child(
+                    div()
+                        .id(("search-history-select", index))
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .truncate()
+                        .text_size(theme::Text::Small.size())
+                        .text_color(theme::text())
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |root, _event: &ClickEvent, _window, cx| {
+                            root.run_history_search(select_query.clone(), cx);
+                        }))
+                        .child(remove_query.clone()),
+                )
+                .child(
+                    div()
+                        .id(("search-history-remove", index))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(18.0))
+                        .rounded_full()
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme::surface_selected()))
+                        .on_click(cx.listener(move |root, _event: &ClickEvent, _window, cx| {
+                            root.remove_search_history(index, cx);
+                        }))
+                        .child(
+                            svg()
+                                .path(icons::path("x"))
+                                .size(px(12.0))
+                                .text_color(theme::text_faint()),
+                        ),
+                )
+        })
+        .collect::<Vec<_>>();
+
+    div()
+        .id("search-history-panel")
+        .flex()
+        .flex_col()
+        .gap(px(theme::space::SM))
+        .p(px(theme::space::MD))
+        .rounded(px(theme::radius::CARD))
+        .bg(theme::surface_elevated())
+        .border_1()
+        .border_color(theme::border())
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .text_size(theme::Text::Small.size())
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(theme::text())
+                        .child(root.tr("搜索历史")),
+                )
+                .child(
+                    div()
+                        .id("search-history-clear")
+                        .cursor_pointer()
+                        .text_size(theme::Text::Tiny.size())
+                        .text_color(theme::text_muted())
+                        .hover(|style| style.text_color(theme::text()))
+                        .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
+                            root.clear_search_history(cx);
+                        }))
+                        .child(root.tr("清空")),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(theme::space::SM))
+                .children(chips),
+        )
+        .into_any_element()
+}
+
 /// 秒级时间戳 → `YYYY-MM-DD`；官方专辑页会展示发行时间。
 fn release_date_label(timestamp_seconds: i64) -> String {
     if timestamp_seconds <= 0 {
@@ -662,6 +766,11 @@ pub(crate) fn search_page(root: &Root, window: &Window, cx: &mut Context<Root>) 
         return search_playlist_detail(root, cx);
     }
     let query = root.search_keyword.trim().to_string();
+    let show_history = root.settings.search_history_is_enabled()
+        && root.search_input.trim().is_empty()
+        && root.search_focus.is_focused(window)
+        && !root.searching
+        && !root.settings.search_history.is_empty();
     div()
         .flex()
         .flex_col()
@@ -669,6 +778,9 @@ pub(crate) fn search_page(root: &Root, window: &Window, cx: &mut Context<Root>) 
         .min_h(px(0.0))
         .gap(px(theme::space::MD))
         .child(search_box(root, window, cx))
+        .when(show_history, |this| {
+            this.child(search_history_panel(root, cx))
+        })
         .child(if query.is_empty() {
             page_title(root.tr("搜索"))
         } else {

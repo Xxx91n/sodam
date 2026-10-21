@@ -295,6 +295,103 @@ fn window_controls_section(_root: &Root, _cx: &mut Context<Root>) -> Option<AnyE
     None
 }
 
+fn search_history_section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
+    let enabled = root.settings.search_history_is_enabled();
+    let count = root.settings.search_history.len();
+    let mut section = div()
+        .flex()
+        .flex_col()
+        .gap(px(theme::space::XS))
+        .child(
+            div()
+                .text_size(theme::Text::Large.size())
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme::text())
+                .child(root.tr("搜索历史")),
+        )
+        .child(
+            div()
+                .text_size(theme::Text::Small.size())
+                .text_color(theme::text_muted())
+                .child(root.tr("仅保存在本机，最多保留 10 条；关闭后会清空记录")),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(theme::space::LG))
+                .px(px(theme::space::MD))
+                .py(px(theme::space::SM))
+                .rounded(px(theme::radius::ROW))
+                .bg(theme::surface())
+                .child(
+                    div()
+                        .text_size(theme::Text::Body.size())
+                        .text_color(theme::text())
+                        .child(root.tr("保存搜索历史")),
+                )
+                .child(
+                    div()
+                        .id("search-history-toggle")
+                        .flex()
+                        .items_center()
+                        .w(px(42.0))
+                        .h(px(24.0))
+                        .p(px(2.0))
+                        .rounded_full()
+                        .cursor_pointer()
+                        .bg(if enabled {
+                            theme::accent()
+                        } else {
+                            theme::surface_hover()
+                        })
+                        .when(enabled, |this| this.justify_end())
+                        .when(!enabled, |this| this.justify_start())
+                        .child(div().size(px(20.0)).rounded_full().bg(if enabled {
+                            theme::text()
+                        } else {
+                            theme::text_muted()
+                        }))
+                        .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
+                            root.toggle_search_history(cx);
+                        })),
+                ),
+        );
+
+    if count > 0 {
+        section = section.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(theme::space::MD))
+                .child(
+                    div()
+                        .text_size(theme::Text::Small.size())
+                        .text_color(theme::text_muted())
+                        .child(root.localized("已保存 {} 条搜索历史", &[count.to_string()])),
+                )
+                .child(
+                    div()
+                        .id("settings-search-history-clear")
+                        .cursor_pointer()
+                        .text_size(theme::Text::Small.size())
+                        .text_color(theme::accent())
+                        .hover(|style| style.text_color(theme::text()))
+                        .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
+                            root.clear_search_history(cx);
+                        }))
+                        .child(root.tr("清空")),
+                ),
+        );
+    }
+
+    section.into_any_element()
+}
+
 pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
     let options = [
         (
@@ -594,6 +691,7 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                 .collect::<Vec<_>>(),
             ),
         )
+        .child(search_history_section(root, cx))
         .children(window_controls_section(root, cx))
         .child(
             div()

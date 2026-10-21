@@ -11,6 +11,41 @@ use std::sync::Arc;
 use super::{Nav, Root};
 
 impl Root {
+    pub fn run_history_search(&mut self, query: String, cx: &mut Context<Self>) {
+        self.search_input = query;
+        self.search_set_cursor(self.search_input.len());
+        self.run_search(cx);
+    }
+
+    pub fn remove_search_history(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.settings.remove_search_history(index) {
+            let _ = self.settings.save();
+        }
+        cx.notify();
+    }
+
+    pub fn clear_search_history(&mut self, cx: &mut Context<Self>) {
+        self.settings.clear_search_history();
+        let _ = self.settings.save();
+        self.set_status("搜索历史已清空", &[]);
+        cx.notify();
+    }
+
+    pub fn toggle_search_history(&mut self, cx: &mut Context<Self>) {
+        let enabled = !self.settings.search_history_is_enabled();
+        self.settings.set_search_history_enabled(enabled);
+        let _ = self.settings.save();
+        self.set_status(
+            if enabled {
+                "搜索历史已开启"
+            } else {
+                "搜索历史已关闭，记录已清空"
+            },
+            &[],
+        );
+        cx.notify();
+    }
+
     /// 触发搜索：网络调用放在 GPUI 的后台执行器上，结果回灌后 `notify` 重绘。
     pub fn run_search(&mut self, cx: &mut Context<Self>) {
         let keyword = self.search_input.trim().to_string();
@@ -21,6 +56,9 @@ impl Root {
         }
         if self.searching {
             return;
+        }
+        if self.settings.record_search(&keyword) {
+            let _ = self.settings.save();
         }
         let scope = self.search_tab;
         let settings = self.settings.clone();

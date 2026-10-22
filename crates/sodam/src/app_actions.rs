@@ -142,11 +142,13 @@ impl Root {
                 {
                     root.playing = false;
                     root.playback_error = Some(snap.error.clone());
-                    root.status = snap.error.clone();
+                    let message = snap.error.clone();
+                    root.notify_error_once("playback-engine-failed", message);
                     cx.notify();
                 }
                 if let Some(error) = root.preferences_writer.take_error() {
-                    root.set_status("保存播放设置失败：{err}", &[error]);
+                    let message = root.localized("保存播放设置失败：{err}", &[error]);
+                    root.notify_error_once("preferences-save-failed", message);
                     cx.notify();
                 }
                 if snap.playing || root.pending_track.is_some() {
@@ -191,9 +193,10 @@ impl Root {
     pub fn remove_from_queue(&mut self, index: usize, cx: &mut Context<Self>) {
         if index == self.queue.index() {
             self.queue_menu = None;
-            self.status = self
+            let message = self
                 .tr("正在播放的曲目不能从队列移除，可直接点「下一首」")
                 .to_string();
+            self.notify_warning_once("remove-current-track", message);
             cx.notify();
             return;
         }
@@ -216,7 +219,10 @@ impl Root {
     pub fn set_quality(&mut self, quality: &str, cx: &mut Context<Self>) {
         let value = if quality == "auto" { "" } else { quality };
         self.settings.quality = value.to_string();
-        let _ = self.settings.save();
+        if let Err(err) = self.settings.save() {
+            let message = self.localized("保存音质设置失败：{err}", &[err.to_string()]);
+            self.notify_error_once("quality-save-failed", message);
+        }
         if let Some(session) = self.session.as_mut() {
             let _ = session.apply(self.settings.clone());
         }
@@ -306,7 +312,8 @@ impl Root {
                     tried.clear();
                 }
                 root.cover_pool.seen.clear();
-                root.set_status("已清理缓存：{} 个文件", &[removed.to_string()]);
+                let message = root.localized("已清理缓存：{} 个文件", &[removed.to_string()]);
+                root.notify_success_once("cache-clear", message);
                 root.refresh_cache_stats(cx);
                 cx.notify();
             });
@@ -344,9 +351,10 @@ impl Root {
                         root.login = LoginState::Failed(
                             root.localized("创建二维码失败：{err}", &[err.to_string()]),
                         );
-                        root.status = language
+                        let status = language
                             .text("创建二维码失败，可点「重新获取二维码」重试")
                             .to_string();
+                        root.set_status_text(status);
                         cx.notify();
                     });
                     return;
@@ -371,7 +379,7 @@ impl Root {
                     token: token.clone(),
                     status: language.text("等待扫码…").to_string(),
                 };
-                root.status = language.text("请用汽水音乐 App 扫码并确认").to_string();
+                root.set_status_text(language.text("请用汽水音乐 App 扫码并确认").to_string());
                 cx.notify();
             });
 
@@ -415,18 +423,19 @@ impl Root {
                             Some(session) => match session.apply_login_cookie(&cookie) {
                                 Ok(()) => {
                                     root.settings = session.settings().clone();
-                                    root.status =
-                                        language.text("登录成功，正在读取账号信息…").to_string();
+                                    root.set_status_text(
+                                        language.text("登录成功，正在读取账号信息…").to_string(),
+                                    );
                                 }
                                 Err(err) => {
-                                    root.set_status(
-                                        "登录成功但保存失败：{err}",
-                                        &[err.to_string()],
-                                    );
+                                    let message = root
+                                        .localized("登录成功但保存失败：{err}", &[err.to_string()]);
+                                    root.notify_error_once("login-save-failed", message);
                                 }
                             },
                             None => {
-                                root.status = language.text("登录成功（会话未初始化）").to_string()
+                                let message = language.text("登录成功（会话未初始化）").to_string();
+                                root.notify_warning_once("login-session-missing", message);
                             }
                         }
                         root.login = LoginState::Idle;
@@ -465,7 +474,7 @@ impl Root {
                         ),
                     };
                     let _ = this.update(cx, |root, cx| {
-                        root.status = message;
+                        root.set_status_text(message);
                         cx.notify();
                     });
                 }
@@ -478,7 +487,9 @@ impl Root {
                 if expired {
                     // 过期就自动换一张新码（会话只有 3 分钟，用户常常来不及扫/确认）
                     let _ = this.update(cx, |root, cx| {
-                        root.status = language.text("二维码已过期，正在自动换新码…").to_string();
+                        root.set_status_text(
+                            language.text("二维码已过期，正在自动换新码…").to_string(),
+                        );
                         root.start_login(cx);
                     });
                     return;
@@ -511,7 +522,7 @@ impl Root {
                         if root.liked_ids_failed {
                             root.load_liked_ids(cx);
                         }
-                        root.set_status(
+                        let message = root.localized(
                             "已登录：{}（{}）",
                             &[
                                 if info.nickname.is_empty() {
@@ -528,25 +539,29 @@ impl Root {
                                 .to_string(),
                             ],
                         );
+                        root.notify_success_once("login-ready", message);
                         if let Some(session) = root.session.as_mut() {
                             match session.refresh_quality(vip) {
                                 Ok(Some(quality)) => {
                                     root.settings = session.settings().clone();
-                                    root.status = root.localized(
+                                    let message = root.localized(
                                         "{}；音质已按权益自动设为 {}",
                                         &[root.status.clone(), quality.to_string()],
                                     );
+                                    root.set_status_text(message);
                                 }
                                 Ok(None) => {}
                                 Err(err) => {
-                                    root.status = root
-                                        .localized("音质偏好保存失败：{err}", &[err.to_string()])
+                                    let message = root
+                                        .localized("音质偏好保存失败：{err}", &[err.to_string()]);
+                                    root.notify_error_once("quality-save-failed", message);
                                 }
                             }
                         }
                     }
                     Err(err) => {
-                        root.status = root.localized("读取账号信息失败：{err}", &[err.to_string()])
+                        let message = root.localized("读取账号信息失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("account-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -562,17 +577,25 @@ impl Root {
         self.settings.theme = theme.key().to_string();
         let save_result = self.settings.save();
         theme::set_theme(theme);
-        self.status = match save_result {
-            Ok(()) => format!(
-                "主题已切换为{}",
-                if theme == ThemeKind::Light {
-                    "浅色"
-                } else {
-                    "深色"
-                }
-            ),
-            Err(err) => self.localized("主题已切换，但保存失败：{err}", &[err.to_string()]),
-        };
+        match save_result {
+            Ok(()) => {
+                let status = format!(
+                    "主题已切换为{}",
+                    if theme == ThemeKind::Light {
+                        "浅色"
+                    } else {
+                        "深色"
+                    }
+                );
+                self.set_status_text(status);
+            }
+            Err(err) => {
+                self.notify_error_once(
+                    "theme-save-failed",
+                    self.localized("主题已切换，但保存失败：{err}", &[err.to_string()]),
+                );
+            }
+        }
         cx.notify();
     }
 
@@ -583,10 +606,15 @@ impl Root {
         self.settings.theme = String::new();
         let save_result = self.settings.save();
         theme::set_theme(self.theme);
-        self.status = match save_result {
-            Ok(()) => self.tr("主题已恢复为跟随系统").to_string(),
-            Err(err) => self.localized("已切换为跟随系统，但保存失败：{err}", &[err.to_string()]),
-        };
+        match save_result {
+            Ok(()) => self.set_status_text(self.tr("主题已恢复为跟随系统")),
+            Err(err) => {
+                self.notify_error_once(
+                    "theme-save-failed",
+                    self.localized("已切换为跟随系统，但保存失败：{err}", &[err.to_string()]),
+                );
+            }
+        }
         cx.notify();
     }
 
@@ -607,7 +635,7 @@ impl Root {
             .clone()
             .or_else(|| self.queue.current().cloned());
         let Some(track) = track else {
-            self.status = self.tr("还没有正在播放的歌曲").to_string();
+            self.set_status_text(self.tr("还没有正在播放的歌曲"));
             cx.notify();
             return;
         };
@@ -682,11 +710,17 @@ impl Root {
                     Ok(raw) => {
                         root.lyrics = Arc::new(raw);
                         root.lyrics_active = None;
-                        root.status = if root.lyrics.is_empty() {
-                            root.localized("「{}」没有可用歌词", std::slice::from_ref(&track.title))
+                        if root.lyrics.is_empty() {
+                            let message = root.localized(
+                                "「{}」没有可用歌词",
+                                std::slice::from_ref(&track.title),
+                            );
+                            root.set_status_text(message);
                         } else {
-                            root.localized("「{}」歌词已加载", std::slice::from_ref(&track.title))
-                        };
+                            let message = root
+                                .localized("「{}」歌词已加载", std::slice::from_ref(&track.title));
+                            root.set_status_text(message);
+                        }
                     }
                     Err(err) => {
                         root.lyrics = Arc::new(Vec::new());
@@ -778,11 +812,12 @@ impl Root {
                 self.loading_scene_cards
             );
         }
-        self.status = if existing_ids.is_empty() {
+        let message = if existing_ids.is_empty() {
             self.tr("正在读取听歌模式…").to_string()
         } else {
             self.tr("正在加载更多探索歌单…").to_string()
         };
+        self.set_status_text(message);
         cx.notify();
         let settings = self.settings.clone();
         let work = cx.background_spawn(async move {
@@ -853,15 +888,22 @@ impl Root {
                         root.scene_cards = Arc::new(all_cards);
                         root.sync_scenes_list();
                         root.ensure_covers(&covers, cx);
-                        root.status = if let Some(err) = mode_error.or(card_error) {
-                            root.localized("读取听歌模式失败：{err}", &[err])
+                        if let Some(err) = mode_error.or(card_error) {
+                            let message = root.localized("读取听歌模式失败：{err}", &[err]);
+                            root.notify_warning_once("scenes-load-failed", message);
                         } else if added == 0 {
-                            root.tr("没有更多探索歌单").to_string()
+                            root.set_status_text(root.tr("没有更多探索歌单"));
                         } else {
-                            root.localized("探索歌单已追加 {} 张",&[added.to_string()])
-                        };
+                            let message =
+                                root.localized("探索歌单已追加 {} 张", &[added.to_string()]);
+                            root.set_status_text(message);
+                        }
                     }
-                    Err(err) => root.status = root.localized("读取听歌模式失败：{err}", &[err.to_string()]),
+                    Err(err) => {
+                        let message =
+                            root.localized("读取听歌模式失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("scenes-load-failed", message);
+                    }
                 }
                 cx.notify();
             });
@@ -880,7 +922,7 @@ impl Root {
         self.loading_recommendation = true;
         self.recommendation_request_seq = self.recommendation_request_seq.wrapping_add(1);
         let request_seq = self.recommendation_request_seq;
-        self.status = self.localized("正在加载「{}」队列…", &[scene_name]);
+        self.set_status_text(self.localized("正在加载「{}」队列…", &[scene_name]));
         cx.notify();
 
         let settings = self.settings.clone();
@@ -911,7 +953,9 @@ impl Root {
                         );
                     }
                     Err(err) => {
-                        root.set_status("加载听歌模式队列失败：{err}", &[err.to_string()]);
+                        let message =
+                            root.localized("加载听歌模式队列失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("scene-queue-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -1044,7 +1088,7 @@ impl Root {
         self.begin_queue_switch(QueueOrigin::Feed, self.tr("推荐队列"), cx);
         self.recommendation_request_seq = self.recommendation_request_seq.wrapping_add(1);
         let request_seq = self.recommendation_request_seq;
-        self.status = self.tr("正在加载推荐队列…").to_string();
+        self.set_status_text(self.tr("正在加载推荐队列…"));
         cx.notify();
 
         let settings = self.settings.clone();
@@ -1071,7 +1115,8 @@ impl Root {
                         );
                     }
                     Err(err) => {
-                        root.set_status("加载推荐队列失败：{err}", &[err.to_string()]);
+                        let message = root.localized("加载推荐队列失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("recommendation-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -1136,14 +1181,16 @@ impl Root {
                                 root.start_track(cx);
                             }
                             Ok(_) => {
-                                root.status = root.localized(
+                                let message = root.localized(
                                     "电台「{}」没有可播放曲目",
                                     std::slice::from_ref(&card.playlist.title),
                                 );
+                                root.notify_warning_once("radio-empty", message);
                             }
                             Err(err) => {
-                                root.status =
-                                    root.localized("加载电台失败：{err}", &[err.to_string()])
+                                let message =
+                                    root.localized("加载电台失败：{err}", &[err.to_string()]);
+                                root.notify_error_once("radio-load-failed", message);
                             }
                         }
                         cx.notify();
@@ -1202,7 +1249,8 @@ impl Root {
                         std::slice::from_ref(&playlist.title),
                     ),
                     Err(err) => {
-                        root.status = root.localized("加载歌单失败：{err}", &[err.to_string()])
+                        let message = root.localized("加载歌单失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("playlist-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -1229,7 +1277,7 @@ impl Root {
         self.loading_recommendation = true;
         self.recommendation_request_seq = self.recommendation_request_seq.wrapping_add(1);
         let request_seq = self.recommendation_request_seq;
-        self.status = self.tr("正在加载更多推荐…").to_string();
+        self.set_status_text(self.tr("正在加载更多推荐…"));
         cx.notify();
 
         let settings = self.settings.clone();
@@ -1260,7 +1308,8 @@ impl Root {
                         root.set_status("推荐队列已追加 {} 首", &[added.to_string()]);
                     }
                     Err(err) => {
-                        root.set_status("加载更多推荐失败：{err}", &[err.to_string()]);
+                        let message = root.localized("加载更多推荐失败：{err}", &[err.to_string()]);
+                        root.notify_warning_once("recommendation-more-failed", message);
                     }
                 }
                 cx.notify();
@@ -1306,10 +1355,15 @@ impl Root {
             settings.save()
         };
         self.settings = settings;
-        self.status = match save_result {
-            Ok(()) => self.tr("已退出登录").to_string(),
-            Err(err) => self.localized("已退出，但保存配置失败：{err}", &[err.to_string()]),
-        };
+        match save_result {
+            Ok(()) => self.set_status_text(self.tr("已退出登录")),
+            Err(err) => {
+                self.notify_error_once(
+                    "logout-save-failed",
+                    self.localized("已退出，但保存配置失败：{err}", &[err.to_string()]),
+                );
+            }
+        }
         cx.notify();
     }
 
@@ -1481,13 +1535,13 @@ impl Root {
             return;
         }
         if self.session.is_none() {
-            self.status = self.tr("需要先登录才能读取歌单").to_string();
+            self.set_status_text(self.tr("需要先登录才能读取歌单"));
             cx.notify();
             return;
         }
         let settings = self.settings.clone();
         self.loading_library = true;
-        self.status = self.tr("正在读取歌单…").to_string();
+        self.set_status_text(self.tr("正在读取歌单…"));
         cx.notify();
         let work = cx.background_spawn(async move {
             let session = Session::new(settings);
@@ -1509,7 +1563,8 @@ impl Root {
                         root.ensure_covers(&covers, cx);
                     }
                     Err(err) => {
-                        root.status = root.localized("读取歌单失败：{err}", &[err.to_string()])
+                        let message = root.localized("读取歌单失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("library-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -1589,11 +1644,12 @@ impl Root {
         } else {
             self.load_liked(cx);
         }
-        self.status = if liked {
+        let message = if liked {
             self.localized("已收藏：{}", std::slice::from_ref(&track.title))
         } else {
             self.localized("已取消收藏：{}", std::slice::from_ref(&track.title))
         };
+        self.set_status_text(message);
         cx.notify();
 
         let settings = self.settings.clone();
@@ -1625,7 +1681,8 @@ impl Root {
                         }
                         root.liked = Arc::new(list);
                     }
-                    root.localized("收藏失败：{err}", &[err.to_string()]);
+                    let message = root.localized("收藏失败：{err}", &[err.to_string()]);
+                    root.notify_error_once("like-toggle-failed", message);
                     cx.notify();
                 }
             });
@@ -1641,13 +1698,13 @@ impl Root {
             return;
         }
         if self.session.is_none() {
-            self.status = self.tr("需要先登录才能读取收藏").to_string();
+            self.set_status_text(self.tr("需要先登录才能读取收藏"));
             cx.notify();
             return;
         }
         let settings = self.settings.clone();
         self.loading_liked = true;
-        self.status = self.tr("正在读取我喜欢的音乐…").to_string();
+        self.set_status_text(self.tr("正在读取我喜欢的音乐…"));
         cx.notify();
         let work = cx.background_spawn(async move {
             let session = Session::new(settings);
@@ -1676,7 +1733,8 @@ impl Root {
                         root.ensure_covers(&head, cx);
                     }
                     Err(err) => {
-                        root.status = root.localized("读取收藏失败：{err}", &[err.to_string()])
+                        let message = root.localized("读取收藏失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("liked-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -1785,7 +1843,8 @@ impl Root {
                     }
                     Err(err) => {
                         root.search_playlist = None;
-                        root.set_status("读取搜索歌单失败：{err}", &[err.to_string()]);
+                        let message = root.localized("读取搜索歌单失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("search-playlist-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -1838,7 +1897,7 @@ impl Root {
         ));
         self.library_detail_list.reset(1);
         self.loading_playlist = true;
-        self.status = self.tr("正在读取歌单曲目…").to_string();
+        self.set_status_text(self.tr("正在读取歌单曲目…"));
         cx.notify();
 
         let settings = self.settings.clone();
@@ -1877,7 +1936,8 @@ impl Root {
                         root.library_detail_list.reset(final_count + 1);
                     }
                     Err(err) => {
-                        root.set_status("读取歌单失败：{err}", &[err.to_string()]);
+                        let message = root.localized("读取歌单失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("playlist-detail-load-failed", message);
                         root.open_playlist = None;
                     }
                 }
@@ -1902,7 +1962,7 @@ impl Root {
         {
             self.consecutive_failures = 0;
             if self.queue.is_empty() {
-                self.status = self.tr("队列是空的：先去搜索或打开一张歌单").to_string();
+                self.set_status_text(self.tr("队列是空的：先去搜索或打开一张歌单"));
                 cx.notify();
                 return;
             }
@@ -1912,18 +1972,19 @@ impl Root {
         }
         self.engine.toggle();
         self.playing = !snapshot.playing;
-        self.status = if self.playing {
+        let message = if self.playing {
             self.tr("播放中").to_string()
         } else {
             self.tr("已暂停").to_string()
         };
+        self.set_status_text(message);
         cx.notify();
     }
 
     /// 装载并播放「当前队列曲目」：后台下载+解密 → 回 UI 线程交给引擎。
     pub fn start_track(&mut self, cx: &mut Context<Self>) {
         let Some(track) = self.queue.current().cloned() else {
-            self.status = self.tr("队列是空的：先去搜索或打开一张歌单").to_string();
+            self.set_status_text(self.tr("队列是空的：先去搜索或打开一张歌单"));
             cx.notify();
             return;
         };
@@ -2011,13 +2072,14 @@ impl Root {
                             "「{}」拉流失败：{err}",
                             &[track.title.to_string(), err.to_string()],
                         );
-                        root.status = message.clone();
-                        root.playback_error = Some(message);
+                        root.playback_error = Some(message.clone());
+                        root.notify_warning_once("track-stream-failed", message);
                         if root.consecutive_failures >= 3 {
                             root.playing = false;
-                            root.status = root
+                            let message = root
                                 .tr("连续 3 首拉流失败，已暂停（检查网络或签名服务）")
                                 .to_string();
+                            root.notify_error_once("consecutive-stream-failures", message);
                         } else if !root.queue.is_empty() {
                             root.next_track(cx);
                         } else {
@@ -2058,9 +2120,12 @@ impl Root {
         {
             Some(Ok(())) => {
                 self.settings = settings;
-                self.status = self.tr("设置已保存").to_string();
+                self.set_status_text(self.tr("设置已保存"));
             }
-            Some(Err(err)) => self.status = self.localized("保存失败：{err}", &[err.to_string()]),
+            Some(Err(err)) => {
+                let message = self.localized("保存失败：{err}", &[err.to_string()]);
+                self.notify_error_once("settings-save-failed", message);
+            }
             None => {
                 self.settings = settings;
                 self.session = Some(Session::new(self.settings.clone()));

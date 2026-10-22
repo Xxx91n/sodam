@@ -235,12 +235,19 @@ fn shortcut_row(root: &Root, slot: Slot, cx: &mut Context<Root>) -> AnyElement {
                             move |root, _event: &ClickEvent, _window, cx| {
                                 shortcuts::set_keystroke(&mut root.settings, slot, String::new());
                                 root.shortcuts_dirty = true;
-                                root.status = if root.language.is_zh() {
+                                let status = if root.language.is_zh() {
                                     root.tr("快捷键已恢复默认").to_string()
                                 } else {
                                     root.tr("Shortcut reset to default").to_string()
                                 };
-                                let _ = root.settings.save();
+                                root.set_status_text(status);
+                                if let Err(err) = root.settings.save() {
+                                    let message = root.localized(
+                                        "快捷键已恢复默认，但保存失败：{err}",
+                                        &[err.to_string()],
+                                    );
+                                    root.notify_error_once("shortcut-save-failed", message);
+                                }
                                 cx.notify();
                             },
                         )),
@@ -338,8 +345,13 @@ pub(crate) fn section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                                 }
                             }
                         };
-                        root.status = message.clone();
-                        root.open_message(crate::ui::message::MessageKind::Warning, message);
+                        root.set_status_text(message.clone());
+                        root.push_message_once(
+                            crate::ui::message::MessageKind::Warning,
+                            message,
+                            Some(crate::ui::message::DEFAULT_DURATION),
+                            "shortcut-conflict",
+                        );
                         cx.stop_propagation();
                         cx.notify();
                         return;
@@ -354,16 +366,23 @@ pub(crate) fn section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                     shortcuts::set_keystroke(&mut root.settings, slot, stored);
                     root.shortcut_capture = None;
                     root.shortcuts_dirty = true;
-                    root.status = if root.language.is_zh() {
+                    let status = if root.language.is_zh() {
                         root.tr("快捷键已更新").to_string()
                     } else {
                         root.tr("Shortcut updated").to_string()
                     };
-                    root.open_message(
+                    root.set_status_text(status.clone());
+                    root.push_message_once(
                         crate::ui::message::MessageKind::Success,
-                        root.status.clone(),
+                        status.clone(),
+                        Some(crate::ui::message::DEFAULT_DURATION),
+                        "shortcut-updated",
                     );
-                    let _ = root.settings.save();
+                    if let Err(err) = root.settings.save() {
+                        let message =
+                            root.localized("快捷键已更新，但保存失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("shortcut-save-failed", message);
+                    }
                     cx.stop_propagation();
                     cx.notify();
                 }))

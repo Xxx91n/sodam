@@ -26,23 +26,39 @@ impl Root {
 
     pub fn clear_search_history(&mut self, cx: &mut Context<Self>) {
         self.settings.clear_search_history();
-        let _ = self.settings.save();
-        self.set_status("搜索历史已清空", &[]);
+        match self.settings.save() {
+            Ok(()) => self.set_status_text(self.tr("搜索历史已清空")),
+            Err(err) => {
+                self.notify_error_once(
+                    "search-history-save-failed",
+                    self.localized("清空搜索历史失败：{err}", &[err.to_string()]),
+                );
+            }
+        }
         cx.notify();
     }
 
     pub fn toggle_search_history(&mut self, cx: &mut Context<Self>) {
         let enabled = !self.settings.search_history_is_enabled();
         self.settings.set_search_history_enabled(enabled);
-        let _ = self.settings.save();
-        self.set_status(
-            if enabled {
-                "搜索历史已开启"
-            } else {
-                "搜索历史已关闭，记录已清空"
-            },
-            &[],
-        );
+        match self.settings.save() {
+            Ok(()) => {
+                let status = self
+                    .tr(if enabled {
+                        "搜索历史已开启"
+                    } else {
+                        "搜索历史已关闭，记录已清空"
+                    })
+                    .to_string();
+                self.set_status_text(status);
+            }
+            Err(err) => {
+                self.notify_error_once(
+                    "search-history-save-failed",
+                    self.localized("保存搜索历史设置失败：{err}", &[err.to_string()]),
+                );
+            }
+        }
         cx.notify();
     }
 
@@ -64,7 +80,7 @@ impl Root {
         let settings = self.settings.clone();
         self.searching = true;
         self.search_keyword = keyword.clone();
-        self.status = self.localized("正在搜索「{}」…", std::slice::from_ref(&keyword));
+        self.set_status_text(self.localized("正在搜索「{}」…", std::slice::from_ref(&keyword)));
         cx.notify();
 
         let work_keyword = keyword.clone();
@@ -77,13 +93,14 @@ impl Root {
                 root.searching = false;
                 match result {
                     Ok(results) => {
-                        root.status = root.localized(
+                        let message = root.localized(
                             "「{}」共 {} 条结果",
                             &[
                                 results.keyword.to_string(),
                                 results.total_count().to_string(),
                             ],
                         );
+                        root.set_status_text(message);
                         root.results = Arc::new(results.all_tracks());
                         root.search_results = results;
                         let covers: Vec<String> = root
@@ -113,7 +130,8 @@ impl Root {
                         root.ensure_covers(&covers, cx);
                     }
                     Err(err) => {
-                        root.status = root.localized("搜索失败：{err}", &[err.to_string()]);
+                        let message = root.localized("搜索失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("search-failed", message);
                         root.results = Arc::new(Vec::new());
                         root.search_results = SearchResults {
                             keyword,
@@ -184,7 +202,8 @@ impl Root {
                         root.set_status("音乐人已加载", &[]);
                     }
                     Err(err) => {
-                        root.status = root.localized("读取音乐人失败：{err}", &[err.to_string()])
+                        let message = root.localized("读取音乐人失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("artist-load-failed", message);
                     }
                 }
                 cx.notify();
@@ -270,8 +289,9 @@ impl Root {
                         root.set_status("音乐人歌曲已加载", &[]);
                     }
                     Err(err) => {
-                        root.status =
-                            root.localized("加载更多音乐人歌曲失败：{err}", &[err.to_string()])
+                        let message =
+                            root.localized("加载更多音乐人歌曲失败：{err}", &[err.to_string()]);
+                        root.notify_warning_once("artist-more-failed", message);
                     }
                 }
                 cx.notify();
@@ -352,10 +372,12 @@ impl Root {
                         root.ensure_covers(&covers, cx);
                         root.open_album = Some(detail);
                         root.album_detail_list.reset(track_count + 1);
-                        root.status = root.localized("专辑共 {} 首", &[track_count.to_string()]);
+                        let message = root.localized("专辑共 {} 首", &[track_count.to_string()]);
+                        root.set_status_text(message);
                     }
                     Err(err) => {
-                        root.status = root.localized("读取专辑失败：{err}", &[err.to_string()])
+                        let message = root.localized("读取专辑失败：{err}", &[err.to_string()]);
+                        root.notify_error_once("album-load-failed", message);
                     }
                 }
                 cx.notify();

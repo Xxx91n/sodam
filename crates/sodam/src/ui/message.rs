@@ -10,6 +10,8 @@ use crate::ui::theme;
 
 /// 默认显示时长，与 Ant Design message 的默认值一致。
 pub const DEFAULT_DURATION: Duration = Duration::from_secs(3);
+/// 即使来自不同来源，也不让提示铺满整块界面。
+const MAX_VISIBLE_MESSAGES: usize = 4;
 
 #[allow(dead_code)] // public message API: Error is used by callers outside this crate's binary tests
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,8 @@ pub struct Message {
     pub text: String,
     /// `None` 表示不自动关闭；默认见 [`DEFAULT_DURATION`]。
     pub duration: Option<Duration>,
+    /// 同一来源的提示会替换旧的，避免定时失败等重复事件堆成消息墙。
+    pub key: Option<String>,
 }
 
 impl Message {
@@ -51,23 +55,41 @@ impl Message {
 
 impl Root {
     /// 打开一条全局 message；返回 ID，可用于 [`Root::close_message`]。
+    #[allow(dead_code)] // 公共 API 保留给不重复的事件
     pub fn open_message(&mut self, kind: MessageKind, text: impl Into<String>) -> u64 {
         self.push_message(kind, text, Some(DEFAULT_DURATION))
     }
 
+    #[allow(dead_code)] // 公共 API 保留给自定义时长
     pub fn push_message(
         &mut self,
         kind: MessageKind,
         text: impl Into<String>,
         duration: Option<Duration>,
     ) -> u64 {
-        self.next_message_id = self.next_message_id.wrapping_add(1);
-        let id = self.next_message_id;
-        self.messages.push(Message {
-            id,
+        self.push_message_with_key(kind, text, duration, None)
+    }
+
+    /// 同 key 的消息替换旧消息；频率由调用方按事件类型控制。
+    pub fn push_message_with_key(
+        &mut self,
+        kind: MessageKind,
+        text: impl Into<String>,
+        duration: Option<Duration>,
+        key: Option<&str>,
+    ) -> u64 {
+        let id = upsert_message(
+            &mut self.messages,
+            &mut self.next_message_id,
             kind,
-            text: text.into(),
+            text.into(),
             duration,
+            key,
+        );
+        self.message_timers.retain(|message_id| {
+            self.messages
+                .iter()
+                .any(|message| message.id == *message_id)
         });
         id
     }
@@ -76,6 +98,17 @@ impl Root {
         let before = self.messages.len();
         self.messages.retain(|message| message.id != id);
         self.messages.len() != before
+    }
+
+    /// 同一 key 的现有消息被替换，返回新消息 id。
+    pub fn push_message_once(
+        &mut self,
+        kind: MessageKind,
+        text: impl Into<String>,
+        duration: Option<Duration>,
+        key: &str,
+    ) -> u64 {
+        self.push_message_with_key(kind, text, duration, Some(key))
     }
 
     /// 启动该条消息的计时器；消息被替换/关闭后计时器会安全退出。
@@ -96,6 +129,38 @@ impl Root {
         })
         .detach();
     }
+}
+
+fn upsert_message(
+    messages: &mut Vec<Message>,
+    next_id: &mut u64,
+    kind: MessageKind,
+    text: String,
+    duration: Option<Duration>,
+    key: Option<&str>,
+) -> u64 {
+    let key = key.map(str::to_string);
+    if let Some(key) = key.as_deref() {
+        if let Some(index) = messages
+            .iter()
+            .position(|message| message.key.as_deref() == Some(key))
+        {
+            messages.remove(index);
+        }
+    }
+    *next_id = next_id.wrapping_add(1);
+    let id = *next_id;
+    messages.push(Message {
+        id,
+        kind,
+        text,
+        duration,
+        key,
+    });
+    if messages.len() > MAX_VISIBLE_MESSAGES {
+        messages.drain(0..messages.len() - MAX_VISIBLE_MESSAGES);
+    }
+    id
 }
 
 /// 最高层浮层：多条消息按插入顺序堆叠，各自独立计时。
@@ -179,6 +244,7 @@ mod tests {
             kind: MessageKind::Info,
             text: "info".into(),
             duration: None,
+            key: None,
         };
         let success = Message {
             kind: MessageKind::Success,
@@ -194,5 +260,51 @@ mod tests {
         };
         assert_ne!(success.icon(), warning.icon());
         assert_ne!(warning.icon(), error.icon());
+    }
+
+    #[test]
+    fn same_message_key_replaces_the_existing_entry_and_restarts_timer() {
+        let mut messages = Vec::new();
+        let mut next_id = 0;
+        let first = upsert_message(
+            &mut messages,
+            &mut next_id,
+            MessageKind::Error,
+            "same failure".into(),
+            Some(DEFAULT_DURATION),
+            Some("save-failed"),
+        );
+        let second = upsert_message(
+            &mut messages,
+            &mut next_id,
+            MessageKind::Warning,
+            "same failure, newer".into(),
+            Some(DEFAULT_DURATION),
+            Some("save-failed"),
+        );
+        assert_ne!(first, second);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].kind, MessageKind::Warning);
+        assert_eq!(messages[0].text, "same failure, newer");
+        assert_eq!(messages[0].id, second);
+    }
+
+    #[test]
+    fn message_buffer_keeps_only_the_newest_entries() {
+        let mut messages = Vec::new();
+        let mut next_id = 0;
+        for index in 0..=MAX_VISIBLE_MESSAGES {
+            upsert_message(
+                &mut messages,
+                &mut next_id,
+                MessageKind::Info,
+                format!("message {index}"),
+                Some(DEFAULT_DURATION),
+                None,
+            );
+        }
+        assert_eq!(messages.len(), MAX_VISIBLE_MESSAGES);
+        assert_eq!(messages[0].text, "message 1");
+        assert_eq!(messages[MAX_VISIBLE_MESSAGES - 1].text, "message 4");
     }
 }

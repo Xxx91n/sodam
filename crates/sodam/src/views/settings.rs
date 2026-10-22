@@ -216,14 +216,16 @@ fn window_controls_section(root: &Root, cx: &mut Context<Root>) -> Option<AnyEle
             .on_click(cx.listener(move |root, _event: &ClickEvent, _window, cx| {
                 root.settings.titlebar = mode.key().to_string();
                 if let Err(err) = root.settings.save() {
-                    root.status =
+                    let message =
                         root.localized("窗口按钮已切换，但保存失败：{err}", &[err.to_string()]);
+                    root.notify_error_once("titlebar-save-failed", message);
                 } else {
-                    root.status = match mode {
+                    let status = match mode {
                         TitlebarMode::Auto => root.tr("窗口按钮：自动（跟随桌面）").to_string(),
                         TitlebarMode::Always => root.tr("窗口按钮：总是显示").to_string(),
                         TitlebarMode::Never => root.tr("窗口按钮：不显示").to_string(),
                     };
+                    root.set_status_text(status);
                 }
                 cx.notify();
             }))
@@ -635,12 +637,20 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                                     root.language = Language::system_locale();
                                     root.language_follows_system = true;
                                     root.settings.language = "auto".to_string();
-                                    let _ = root.settings.save();
-                                    root.status = if root.language.is_zh() {
-                                        root.tr("语言已恢复为跟随系统").to_string()
+                                    if let Err(err) = root.settings.save() {
+                                        let message = root.localized(
+                                            "语言已恢复为跟随系统，但保存失败：{err}",
+                                            &[err.to_string()],
+                                        );
+                                        root.notify_error_once("language-save-failed", message);
                                     } else {
-                                        "Language restored to system".to_string()
-                                    };
+                                        let status = if root.language.is_zh() {
+                                            root.tr("语言已恢复为跟随系统").to_string()
+                                        } else {
+                                            "Language restored to system".to_string()
+                                        };
+                                        root.set_status_text(status);
+                                    }
                                     // macOS 菜单栏的标题也要跟着换语言。
                                     #[cfg(target_os = "macos")]
                                     crate::menus::refresh(cx, root.language);

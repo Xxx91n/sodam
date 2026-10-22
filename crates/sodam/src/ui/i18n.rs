@@ -96,6 +96,7 @@ impl Language {
             "账号" => "Account",
             "{}；音质已按权益自动设为 {quality}" => "{}; quality set to {}",
             "音质偏好保存失败：{err}" => "Failed to save audio quality: {err}",
+            "保存音质设置失败：{err}" => "Failed to save audio quality: {err}",
             "读取账号信息失败：{err}" => "Failed to load account: {err}",
             "主题已切换为{}" => "Theme switched to {}",
             "浅色" => "Light",
@@ -183,6 +184,10 @@ impl Language {
             }
             "快捷键已更新" => "Shortcut updated",
             "快捷键已恢复默认" => "Shortcut reset to default",
+            "快捷键已更新，但保存失败：{err}" => "Shortcut updated, but saving failed: {err}",
+            "快捷键已恢复默认，但保存失败：{err}" => {
+                "Shortcut reset to default, but saving failed: {err}"
+            }
             "聚焦搜索框" => "Focus the search box",
             "徽标键由系统占用，请换个组合键" => {
                 "The Windows/Super key belongs to the system — pick another combination"
@@ -213,6 +218,9 @@ impl Language {
             "{} 首" => "{} tracks",
             "用户 {} · {}" => "User {} · {}",
             "语言已恢复为跟随系统" => "Language restored to system",
+            "语言已恢复为跟随系统，但保存失败：{err}" => {
+                "Language restored to system, but saving failed: {err}"
+            }
             "共 {}（歌曲 {} 首 {} / 封面 {} 张 {}）" => "Total {} ({} songs {}, {} covers {})",
             "签名服务：{}" => "Signer: {}",
             "配置：{}" => "Config: {}",
@@ -490,6 +498,8 @@ impl Language {
             "清空缓存" => "Clear Cache",
             "正在清理…" => "Clearing…",
             "保存播放设置失败：{err}" => "Failed to save playback settings: {err}",
+            "清空搜索历史失败：{err}" => "Failed to clear search history: {err}",
+            "保存搜索历史设置失败：{err}" => "Failed to save search history settings: {err}",
             "音频输出长时间无响应，请重试播放" => "Audio output stopped responding. Try playing again.",
             "音频线程已退出，请重启应用" => "The audio worker stopped. Please restart the app.",
             "签名服务：{}" => "Signer: {}",

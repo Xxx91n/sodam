@@ -455,7 +455,7 @@ impl Root {
             recommendation_request_seq: 0,
             status,
             status_seq: 0,
-            status_since: Some(std::time::Instant::now()),
+            status_since: None,
             messages: Vec::new(),
             next_message_id: 0,
             message_timers: HashSet::new(),
@@ -576,7 +576,7 @@ impl Root {
             root.load_liked_ids(cx);
             root.start_recommendation(false, cx);
         } else {
-            root.status = root.tr("请先在「设置 → 账户」扫码登录").to_string();
+            root.set_status_text(root.tr("请先在「设置 → 账户」扫码登录"));
         }
         // 开发/验证便利：`SODAM_QUERY="周杰伦" cargo run -p sodam` 启动即搜索一次
         if let Ok(query) = std::env::var("SODAM_QUERY") {
@@ -1086,12 +1086,65 @@ impl Root {
     }
 
     pub fn set_status(&mut self, key: &'static str, args: &[String]) {
-        self.status = self.localized(key, args);
-        self.show_status();
-        self.open_message(ui::message::MessageKind::Info, self.status.clone());
+        self.set_status_text(self.localized(key, args));
     }
 
-    /// 让最新 status 显示一段时间；用作全局 message 的唯一生命周期入口。
+    /// 普通操作反馈：只进入底部状态行，不触发全局 message。
+    pub fn set_status_text(&mut self, text: impl Into<String>) {
+        self.status = text.into();
+        self.show_status();
+    }
+
+    /// 重要成功结果：状态 + 全局轻提示。
+    #[allow(dead_code)] // 公共 API 给不重复的 user-triggered success
+    pub fn notify_success(&mut self, text: impl Into<String>) -> u64 {
+        self.notify_message(ui::message::MessageKind::Success, text.into(), None)
+    }
+
+    /// 同一来源的成功提示只保留一条。
+    pub fn notify_success_once(&mut self, key: &str, text: impl Into<String>) -> u64 {
+        self.notify_message(ui::message::MessageKind::Success, text.into(), Some(key))
+    }
+
+    /// 重要警告：状态 + 全局轻提示。
+    #[allow(dead_code)] // 公共 API 给不重复的 user-triggered warning
+    pub fn notify_warning(&mut self, text: impl Into<String>) -> u64 {
+        self.notify_message(ui::message::MessageKind::Warning, text.into(), None)
+    }
+
+    /// 同一来源的警告只保留一条。
+    pub fn notify_warning_once(&mut self, key: &str, text: impl Into<String>) -> u64 {
+        self.notify_message(ui::message::MessageKind::Warning, text.into(), Some(key))
+    }
+
+    /// 需要用户注意的可恢复错误：状态 + 全局轻提示。
+    #[allow(dead_code)] // 留给不重复的 user-triggered errors
+    pub fn notify_error(&mut self, text: impl Into<String>) -> u64 {
+        self.notify_message(ui::message::MessageKind::Error, text.into(), None)
+    }
+
+    /// 同一来源的重复错误替换旧提示，避免轮询/重试堆成消息墙。
+    pub fn notify_error_once(&mut self, key: &str, text: impl Into<String>) -> u64 {
+        self.notify_message(ui::message::MessageKind::Error, text.into(), Some(key))
+    }
+
+    fn notify_message(
+        &mut self,
+        kind: ui::message::MessageKind,
+        text: String,
+        key: Option<&str>,
+    ) -> u64 {
+        self.status = text;
+        self.show_status();
+        self.push_message_with_key(
+            kind,
+            self.status.clone(),
+            Some(ui::message::DEFAULT_DURATION),
+            key,
+        )
+    }
+
+    /// 记录最新状态。
     pub(crate) fn show_status(&mut self) {
         self.status_seq = self.status_seq.wrapping_add(1);
         self.status_since = Some(std::time::Instant::now());
@@ -1102,22 +1155,24 @@ impl Root {
         self.language_follows_system = false;
         self.settings.language = language.key().to_string();
         let save_result = self.settings.save();
-        self.status = match save_result {
+        match save_result {
             Ok(()) => {
-                if language.is_zh() {
+                let status = if language.is_zh() {
                     language.text("语言已切换为中文").to_string()
                 } else {
                     language.text("Language switched to English").to_string()
-                }
+                };
+                self.set_status_text(status);
             }
             Err(err) => {
-                if self.language.is_zh() {
+                let message = if self.language.is_zh() {
                     language.textf("语言已切换，但保存失败：{err}", &[err.to_string()])
                 } else {
                     format!("Language switched, but saving failed: {err}")
-                }
+                };
+                self.notify_warning_once("language-save-failed", message);
             }
-        };
+        }
         // macOS 菜单栏的标题也要跟着换语言。
         #[cfg(target_os = "macos")]
         crate::menus::refresh(cx, language);

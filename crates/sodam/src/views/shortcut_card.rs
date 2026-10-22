@@ -313,9 +313,30 @@ pub(crate) fn section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                         cx.notify();
                         return;
                     }
-                    // 存规范串，不存 Display 形式：旧版存 `ctrl-A` / `⌘←` 这类显示串，
-                    // parse 回来是另一个键（甚至是个不存在的键名），绑上就是死键（#39）。
                     let stored = shortcuts::canonical_keystroke(&keystroke);
+                    if let Some(conflict) =
+                        shortcuts::shortcut_conflict(&root.settings, slot, &stored)
+                    {
+                        let message = match conflict {
+                            shortcuts::ShortcutConflict::Playback(other) => {
+                                let label = slot_label(root, other);
+                                if root.language.is_zh() {
+                                    root.localized("该组合键已被「{}」占用", &[label.to_string()])
+                                } else {
+                                    format!("Shortcut already used by \"{label}\"")
+                                }
+                            }
+                            shortcuts::ShortcutConflict::MacosMenu => {
+                                root.localized("该组合键由 macOS 菜单保留，不能绑定", &[])
+                            }
+                        };
+                        root.status = message.clone();
+                        root.open_message(crate::ui::message::MessageKind::Warning, message);
+                        cx.stop_propagation();
+                        cx.notify();
+                        return;
+                    }
+                    // 规范串 #39 已经在 PR #42 中生成和过滤；这里只做绑定与提示。
                     if !shortcuts::is_bindable_source(&stored) {
                         root.shortcut_note = Some("这个键无法作为快捷键，请换个组合键");
                         cx.stop_propagation();
@@ -330,6 +351,10 @@ pub(crate) fn section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                     } else {
                         root.tr("Shortcut updated").to_string()
                     };
+                    root.open_message(
+                        crate::ui::message::MessageKind::Success,
+                        root.status.clone(),
+                    );
                     let _ = root.settings.save();
                     cx.stop_propagation();
                     cx.notify();

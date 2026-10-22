@@ -192,6 +192,8 @@ impl Language {
             "这一行的按键无法解析，未生效" => {
                 "This row's key can't be parsed, so it is not bound"
             }
+            "该组合键已被「{}」占用" => "Shortcut already used by \"{}\"",
+            "该组合键由 macOS 菜单保留，不能绑定" => "Reserved by the macOS menu",
             "未在播放" => "Nothing playing",
             "「{}」共 {} 条结果" => "{}: {} results",
             "读取音乐人失败：{err}" => "Failed to load artist: {err}",

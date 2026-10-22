@@ -352,6 +352,24 @@ pub fn accent_soft() -> Rgba {
     color
 }
 
+/// 警示色：message 的 warning 级别使用；不替代主色，也不用于普通按钮。
+pub fn warning() -> Rgba {
+    if is_dark() {
+        hex(0xF5A524)
+    } else {
+        hex(0xB7791F)
+    }
+}
+
+/// 错误色：message 的 error 级别使用。
+pub fn danger() -> Rgba {
+    if is_dark() {
+        hex(0xF31260)
+    } else {
+        hex(0xC41D4A)
+    }
+}
+
 /// 全局自适应背景：封面主色 wash 后的同色相明暗渐变。
 pub fn ambient_background() -> Background {
     let neutral = if is_dark() {

@@ -203,6 +203,13 @@ pub struct Root {
     pub queue_origin: QueueOrigin,
     pub playing: bool,
     pub status: String,
+    /// 全局轻提示：每次 status 更新都递增序号，并记录起始时间。
+    pub(crate) status_seq: u64,
+    pub(crate) status_since: Option<std::time::Instant>,
+    /// 全局 message 队列与计时去重集合。
+    pub(crate) messages: Vec<ui::message::Message>,
+    pub(crate) next_message_id: u64,
+    pub(crate) message_timers: HashSet<u64>,
     /// 官方推荐队列分页状态。
     pub recommendation: Option<RecommendationSource>,
     pub loading_recommendation: bool,
@@ -441,6 +448,11 @@ impl Root {
             switching_label: language.text("推荐队列").to_string(),
             recommendation_request_seq: 0,
             status,
+            status_seq: 0,
+            status_since: Some(std::time::Instant::now()),
+            messages: Vec::new(),
+            next_message_id: 0,
+            message_timers: HashSet::new(),
             lyrics: Arc::new(Vec::new()),
             lyrics_track_id: String::new(),
             lyrics_title: String::new(),
@@ -931,6 +943,14 @@ impl Root {
 
     pub fn set_status(&mut self, key: &'static str, args: &[String]) {
         self.status = self.localized(key, args);
+        self.show_status();
+        self.open_message(ui::message::MessageKind::Info, self.status.clone());
+    }
+
+    /// 让最新 status 显示一段时间；用作全局 message 的唯一生命周期入口。
+    pub(crate) fn show_status(&mut self) {
+        self.status_seq = self.status_seq.wrapping_add(1);
+        self.status_since = Some(std::time::Instant::now());
     }
 
     pub fn set_language(&mut self, language: Language, cx: &mut Context<Self>) {
@@ -1080,6 +1100,9 @@ impl Render for Root {
                 self.login_modal_open && self.settings.cookie.trim().is_empty(),
                 |this| this.child(crate::views::login_modal(self, cx)),
             )
+            .when_some(ui::message::render(self, cx), |this, message| {
+                this.child(message)
+            })
             .when(
                 self.queue_menu.is_some() || self.track_menu.is_some(),
                 |this| {

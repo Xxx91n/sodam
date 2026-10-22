@@ -38,6 +38,19 @@ pub enum Slot {
     Next,
 }
 
+impl Slot {
+    const ALL: [Self; 3] = [Self::Toggle, Self::Previous, Self::Next];
+}
+
+/// 录制候选键不能生效的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutConflict {
+    /// 同一个组合键已经绑给了另一个播放动作。
+    Playback(Slot),
+    /// macOS 菜单保留键。
+    MacosMenu,
+}
+
 /// 读取某个动作当前生效的按键（gpui keystroke 写法）。
 pub fn keystroke_of(settings: &Settings, slot: Slot) -> &str {
     match slot {
@@ -101,6 +114,32 @@ pub fn is_bindable_source(source: &str) -> bool {
         && source
             .split_whitespace()
             .all(|part| Keystroke::parse(part).is_ok())
+}
+
+/// 检查候选组合键能否绑定到 `slot`。
+///
+/// 比较的是生效值而不是配置原文：空串代表内置默认，手改配置造成的重复
+/// 也应在下次录制时被发现。按键写法忽略大小写和前后空白。
+pub fn shortcut_conflict(
+    settings: &Settings,
+    slot: Slot,
+    candidate: &str,
+) -> Option<ShortcutConflict> {
+    let candidate = candidate.trim();
+    if cfg!(target_os = "macos")
+        && matches!(
+            candidate.to_ascii_lowercase().as_str(),
+            "cmd-q" | "cmd-m" | "cmd-w"
+        )
+    {
+        return Some(ShortcutConflict::MacosMenu);
+    }
+
+    Slot::ALL
+        .into_iter()
+        .filter(|other| *other != slot)
+        .find(|other| keystroke_of(settings, *other).eq_ignore_ascii_case(candidate))
+        .map(ShortcutConflict::Playback)
 }
 
 /// 装好动作处理器，并按配置应用一次绑定。启动时调用一次。
@@ -244,5 +283,65 @@ mod tests {
             ..Default::default()
         };
         assert!(bindings(&all_bad).is_empty());
+    }
+
+    fn settings_with(previous: &str, next: &str) -> Settings {
+        Settings {
+            shortcut_previous: previous.to_owned(),
+            shortcut_next: next.to_owned(),
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn playback_slots_reject_each_others_effective_shortcuts() {
+        let settings = settings_with("ctrl-up", "ctrl-down");
+        assert_eq!(
+            shortcut_conflict(&settings, Slot::Next, "CTRL-UP"),
+            Some(ShortcutConflict::Playback(Slot::Previous))
+        );
+        assert_eq!(
+            shortcut_conflict(&settings, Slot::Toggle, "ctrl-down"),
+            Some(ShortcutConflict::Playback(Slot::Next))
+        );
+        assert_eq!(
+            shortcut_conflict(&settings, Slot::Toggle, "alt-space"),
+            None
+        );
+    }
+
+    #[test]
+    fn defaults_participate_in_conflict_detection() {
+        let settings = Settings::default();
+        let slot = if settings.shortcut_toggle() == settings.shortcut_previous() {
+            Slot::Next
+        } else {
+            Slot::Previous
+        };
+        assert_eq!(
+            shortcut_conflict(&settings, slot, settings.shortcut_toggle()),
+            Some(ShortcutConflict::Playback(Slot::Toggle))
+        );
+    }
+
+    #[test]
+    fn same_slot_can_be_recorded_again() {
+        let settings = settings_with("ctrl-up", "");
+        assert_eq!(
+            shortcut_conflict(&settings, Slot::Previous, "ctrl-up"),
+            None
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_menu_shortcuts_are_reserved() {
+        let settings = Settings::default();
+        for key in ["cmd-q", "CMD-M", "cmd-w"] {
+            assert_eq!(
+                shortcut_conflict(&settings, Slot::Toggle, key),
+                Some(ShortcutConflict::MacosMenu)
+            );
+        }
     }
 }

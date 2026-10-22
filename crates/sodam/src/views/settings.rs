@@ -4,6 +4,7 @@ use super::*;
 use crate::ui::i18n::Language;
 #[cfg(target_os = "linux")]
 use sodam_core::config::TitlebarMode;
+use std::sync::Arc;
 
 /// 字节 → 人类可读（KB / MB / GB）。
 fn human_bytes(bytes: u64) -> String {
@@ -374,7 +375,7 @@ fn search_history_section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
     section.into_any_element()
 }
 
-pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
+pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyElement {
     let options = [
         (
             "auto",
@@ -933,63 +934,157 @@ pub(crate) fn settings_view(root: &Root, cx: &mut Context<Root>) -> AnyElement {
         )
         .child({
             let repository = env!("CARGO_PKG_REPOSITORY");
+            let contributors = root.contributors_image.clone();
+            root.ensure_contributors(cx);
             div()
                 .id("about-footer")
                 .flex()
-                .flex_row()
-                .items_center()
+                .flex_col()
                 .gap(px(theme::space::MD))
-                .px(px(theme::space::MD))
-                .py(px(theme::space::SM))
+                .p(px(theme::space::MD))
                 .rounded(px(theme::radius::CARD))
                 .bg(theme::surface_elevated())
                 .border_1()
                 .border_color(theme::border())
-                .cursor_pointer()
-                .hover(|style| style.bg(theme::surface_hover()))
-                .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
-                    root.open_github_repository(cx);
-                }))
-                .child(
-                    img("icons/sodam-logo.svg")
-                        .size(px(36.0))
-                        .flex_none()
-                        .rounded(px(theme::radius::ROW))
-                        .object_fit(ObjectFit::Cover),
-                )
                 .child(
                     div()
-                        .flex_1()
                         .flex()
-                        .flex_col()
-                        .min_w(px(0.0))
-                        .gap(px(theme::space::XS))
+                        .flex_row()
+                        .items_center()
+                        .gap(px(theme::space::MD))
                         .child(
-                            div()
-                                .text_size(theme::Text::Small.size())
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(theme::text())
-                                .child(format!("SodaM v{}", env!("CARGO_PKG_VERSION"))),
+                            img("icons/sodam-logo.svg")
+                                .size(px(36.0))
+                                .flex_none()
+                                .rounded(px(theme::radius::ROW))
+                                .object_fit(ObjectFit::Cover),
                         )
                         .child(
                             div()
-                                .truncate()
-                                .text_size(theme::Text::Tiny.size())
-                                .text_color(theme::text_muted())
-                                .child(format!("GitHub: {repository}")),
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .min_w(px(0.0))
+                                .gap(px(theme::space::XS))
+                                .child(
+                                    div()
+                                        .text_size(theme::Text::Small.size())
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::text())
+                                        .child(format!("SodaM v{}", env!("CARGO_PKG_VERSION"))),
+                                )
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .text_size(theme::Text::Tiny.size())
+                                        .text_color(theme::text_muted())
+                                        .child(format!("GitHub: {repository}")),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(theme::Text::Tiny.size())
+                                        .text_color(theme::text_faint())
+                                        .child(format!(
+                                            "{} · {}",
+                                            root.tr("维护者"),
+                                            "ZephyrCheung"
+                                        )),
+                                ),
                         )
                         .child(
                             div()
-                                .text_size(theme::Text::Tiny.size())
-                                .text_color(theme::text_faint())
-                                .child("Author: ZephyrCheung"),
+                                .id("open-repository")
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .h(px(theme::size::CONTROL_SM))
+                                .px(px(theme::space::MD))
+                                .rounded(px(theme::radius::ROW))
+                                .cursor_pointer()
+                                .hover(|style| style.bg(theme::surface_hover()))
+                                .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
+                                    root.open_github_repository(cx);
+                                }))
+                                .child(
+                                    svg()
+                                        .path(icons::path("chevron-right"))
+                                        .size(px(theme::ICON_SM))
+                                        .text_color(theme::text_faint()),
+                                ),
                         ),
                 )
                 .child(
-                    svg()
-                        .path(icons::path("chevron-right"))
-                        .size(px(theme::ICON_SM))
-                        .text_color(theme::text_faint()),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(theme::space::SM))
+                        .pt(px(theme::space::SM))
+                        .border_t_1()
+                        .border_color(theme::border())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(theme::Text::Small.size())
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .text_color(theme::text())
+                                        .child(root.tr("贡献者")),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(theme::Text::Tiny.size())
+                                        .text_color(theme::text_faint())
+                                        .child("contrib.rocks"),
+                                ),
+                        )
+                        .child(if let Some(image) = contributors {
+                            div()
+                                .flex()
+                                .w_full()
+                                .justify_center()
+                                .child(
+                                    img(Arc::clone(&image))
+                                        .w_full()
+                                        .h(px(64.0))
+                                        .object_fit(ObjectFit::Contain),
+                                )
+                                .into_any_element()
+                        } else if root.contributors_failed {
+                            div()
+                                .id("retry-contributors")
+                                .h(px(64.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(theme::radius::ROW))
+                                .bg(theme::surface_hover())
+                                .cursor_pointer()
+                                .hover(|style| style.opacity(0.85))
+                                .text_size(theme::Text::Tiny.size())
+                                .text_color(theme::text_muted())
+                                .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
+                                    root.ensure_contributors(cx);
+                                }))
+                                .child(root.tr("加载失败，点击重试"))
+                                .into_any_element()
+                        } else {
+                            div()
+                                .h(px(64.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(theme::radius::ROW))
+                                .bg(theme::surface_hover())
+                                .text_size(theme::Text::Tiny.size())
+                                .text_color(theme::text_faint())
+                                .child(root.tr("正在加载贡献者…"))
+                                .into_any_element()
+                        }),
                 )
         })
         .into_any_element()

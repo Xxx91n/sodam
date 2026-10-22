@@ -17,6 +17,31 @@ use super::{status_label, LoginState, Nav, QueueOrigin, Root, ROW_BATCH};
 use sodam_core::queue::Queue;
 
 impl Root {
+    /// 设置页贡献者墙：用 contrib.rocks 的组合图，后台拉取并缓存在内存。
+    ///
+    /// 不用 GitHub API，因此没有 token / 请求配额问题；贡献者增减由服务自动更新。
+    pub fn ensure_contributors(&mut self, cx: &mut Context<Self>) {
+        if self.contributors_image.is_some() || self.contributors_fetching {
+            return;
+        }
+        self.contributors_failed = false;
+        self.contributors_fetching = true;
+        let work =
+            cx.background_spawn(async { sodam_core::contributors::fetch_contributors_svg() });
+        cx.spawn(async move |this, cx| {
+            let image = work
+                .await
+                .map(|bytes| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Svg, bytes)));
+            let _ = this.update(cx, |root, cx| {
+                root.contributors_fetching = false;
+                root.contributors_failed = image.is_none();
+                root.contributors_image = image;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn search_input_focused(&self, window: &Window) -> bool {
         self.search_focus.is_focused(window)
     }

@@ -7,7 +7,8 @@ mod search_actions;
 
 use gpui::prelude::*;
 use gpui::{
-    div, px, Context, Decorations, EntityInputHandler, FocusHandle, Render, UTF16Selection, Window,
+    div, px, Context, Decorations, EntityInputHandler, FocusHandle, Image, Render, UTF16Selection,
+    Window,
 };
 use sodam_core::{
     library::{RecommendationSource, SceneCard, SearchScope},
@@ -372,6 +373,10 @@ pub struct Root {
     pub covers: Arc<HashMap<String, PathBuf>>,
     pub original_covers: HashMap<String, PathBuf>,
     pub original_cover_attempted: Arc<Mutex<HashSet<String>>>,
+    /// “其他”里的贡献者图（contrib.rocks 组合 SVG）；独立缓存，不参与歌曲封面统计。
+    pub contributors_image: Option<Arc<Image>>,
+    pub(crate) contributors_fetching: bool,
+    pub(crate) contributors_failed: bool,
     pub ambient_colors: HashMap<String, (u8, u8, u8)>,
     pub(crate) cover_pool: CoverPool,
     /// 各列表当前渲染的行数（点「显示更多」时递增）。
@@ -561,6 +566,9 @@ impl Root {
             covers: Arc::new(HashMap::new()),
             original_covers: HashMap::new(),
             original_cover_attempted: Arc::new(Mutex::new(HashSet::new())),
+            contributors_image: None,
+            contributors_fetching: false,
+            contributors_failed: false,
             ambient_colors: HashMap::new(),
             cover_pool: CoverPool::new(),
             login: LoginState::Idle,

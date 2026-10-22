@@ -1025,7 +1025,7 @@ fn qr_canvas(matrix: Vec<Vec<bool>>) -> impl IntoElement {
 }
 
 /// 渲染内容区。
-pub fn render(root: &Root, window: &Window, cx: &mut Context<Root>) -> impl IntoElement {
+pub fn render(root: &mut Root, window: &Window, cx: &mut Context<Root>) -> impl IntoElement {
     let settings = &root.settings;
     let logged_in = !settings.cookie.trim().is_empty();
 

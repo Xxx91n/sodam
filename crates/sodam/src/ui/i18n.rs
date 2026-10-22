@@ -317,6 +317,10 @@ impl Language {
             }
             "清除歌曲缓存" => "Clear Song Cache",
             "其他" => "Other",
+            "维护者" => "Maintainer",
+            "贡献者" => "Contributors",
+            "正在加载贡献者…" => "Loading contributors…",
+            "加载失败，点击重试" => "Failed to load. Click to retry.",
             "签名服务：{}" => "Signer: {}",
             "（未配置）" => "(not configured)",
             "配置：{}" => "Config: {}",

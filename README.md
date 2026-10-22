@@ -16,7 +16,8 @@
     <a href="https://sodahub-org.github.io/sodam/install.html">安装说明</a> ·
     <a href="https://sodahub-org.github.io/sodam/llm.html">让 AI 帮我装</a> ·
     <a href="https://sodahub-org.github.io/sodam/changelog.html">更新日志</a> ·
-    <a href="https://sodahub-org.github.io/sodam/developers.html">开发者文档</a></p>
+    <a href="https://sodahub-org.github.io/sodam/developers.html">开发者文档</a> ·
+    <a href="PRIVACY.md">隐私政策</a></p>
   <p>
     <a href="https://linux.do/t/topic/2921819">
       <img src="docs/img/linux-do.svg" width="22" alt="LINUX DO">

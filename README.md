@@ -45,47 +45,9 @@ SodaM 是**汽水音乐的第三方桌面客户端**，面向 Linux / macOS / Wi
 提 issue 请用[模板](https://github.com/sodahub-org/sodam/issues/new/choose)。
 
 
-<table align="center">
-  <tr>
-    <td align="center">
-      <a href="https://github.com/zephyr-cheung">
-        <img src="https://avatars.githubusercontent.com/u/221658147?v=4" width="72" alt="ZephyrCheung"><br />
-        <strong>ZephyrCheung</strong><br />
-        Maintainer
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/aBER0724">
-        <img src="https://avatars.githubusercontent.com/u/69146982?v=4" width="72" alt="aBER0724"><br />
-        <strong>aBER0724</strong><br />
-        Contributor
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/duanego">
-        <img src="https://avatars.githubusercontent.com/u/33107702?v=4" width="72" alt="duanego"><br />
-        <strong>duanego</strong><br />
-        Contributor
-      </a>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/Xxx91n">
-        <img src="https://avatars.githubusercontent.com/u/238613278?v=4" width="72" alt="Xxx91n"><br />
-        <strong>Xxx91n</strong><br />
-        Contributor
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/BranchCrypto">
-        <img src="https://avatars.githubusercontent.com/u/182780352?v=4" width="72" alt="BranchCrypto"><br />
-        <strong>BranchCrypto</strong><br />
-        Contributor
-      </a>
-    </td>
-  </tr>
-</table>
+<a href="https://github.com/sodahub-org/sodam/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=sodahub-org/sodam" alt="SodaM contributors" loading="lazy">
+</a>
 
 ### 平台支持
 

@@ -332,32 +332,12 @@ fn search_history_section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                         .text_color(theme::text())
                         .child(root.tr("保存搜索历史")),
                 )
-                .child(
-                    div()
-                        .id("search-history-toggle")
-                        .flex()
-                        .items_center()
-                        .w(px(42.0))
-                        .h(px(24.0))
-                        .p(px(2.0))
-                        .rounded_full()
-                        .cursor_pointer()
-                        .bg(if enabled {
-                            theme::accent()
-                        } else {
-                            theme::surface_hover()
-                        })
-                        .when(enabled, |this| this.justify_end())
-                        .when(!enabled, |this| this.justify_start())
-                        .child(div().size(px(20.0)).rounded_full().bg(if enabled {
-                            theme::text()
-                        } else {
-                            theme::text_muted()
-                        }))
-                        .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
-                            root.toggle_search_history(cx);
-                        })),
-                ),
+                .child(crate::ui::switch::render(
+                    "search-history-toggle",
+                    enabled,
+                    |root, _window, cx| root.toggle_search_history(cx),
+                    cx,
+                )),
         );
 
     if count > 0 {

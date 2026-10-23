@@ -1122,7 +1122,7 @@ impl Root {
 
     /// 普通操作反馈：只进入底部状态行，不触发全局 message。
     pub fn set_status_text(&mut self, text: impl Into<String>) {
-        self.status = sodam_core::failure::redact_url_secrets(&text.into());
+        self.status = sodam_core::failure::strip_urls_for_user(&text.into());
         self.show_status();
     }
 
@@ -1165,9 +1165,9 @@ impl Root {
         text: String,
         key: Option<&str>,
     ) -> u64 {
-        // 上屏前统一脱敏：libresoda 会把带签名 token 的 URL 拼进错误文本，
-        // 任何一条路径（播放、歌词、曲库…）都不该把它送上界面。
-        self.status = sodam_core::failure::redact_url_secrets(&text);
+        // 上屏前摘掉接口地址：内部端点对普通用户既无意义又泄露拓扑；带签名 token 的查询串
+        // 更早就不该出现。给维护者看的原文留给日志（`PlaybackFailure::detail`）。
+        self.status = sodam_core::failure::strip_urls_for_user(&text);
         self.show_status();
         self.push_message_with_key(
             kind,

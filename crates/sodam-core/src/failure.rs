@@ -61,7 +61,8 @@ pub struct PlaybackFailure {
     pub stage: Stage,
     pub retryability: Retryability,
     pub action: RecoveryAction,
-    /// 供日志与界面补充说明；**已经过 [`redact_url_secrets`] 脱敏**。
+    /// 给日志与「展开详情」用的原文：已按 [`redact_url_secrets`] 切断查询串，但仍保留接口地址。
+    /// 界面文案不要直接用它——用 [`PlaybackFailure::for_user`]。
     pub detail: String,
 }
 
@@ -78,6 +79,12 @@ impl PlaybackFailure {
             action,
             detail: redact_url_secrets(&detail.into()),
         }
+    }
+
+    /// 给人看的那份：接口地址整段去掉，只留发生了什么。带地址的原文留在 [`Self::detail`]，
+    /// 那是日志与「展开详情」的料。
+    pub fn for_user(&self) -> String {
+        strip_urls_for_user(&self.detail)
     }
 }
 
@@ -224,6 +231,9 @@ fn classify_http(detail: &str) -> PlaybackFailure {
 }
 
 /// 抹掉文本里任何 URL 的查询串：播放地址的 token 就在其中，绝不能进用户可见文案。
+///
+/// 这是**给日志与详情用的**那一层——保留接口地址本身，只切断查询串。
+/// 界面用的是 [`strip_urls_for_user`]。
 pub fn redact_url_secrets(text: &str) -> String {
     text.split_inclusive(char::is_whitespace)
         .map(|token| {
@@ -239,6 +249,47 @@ pub fn redact_url_secrets(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// 用户可见文本：**任何**接口地址整段去掉，不给普通用户看内部拓扑。
+///
+/// 判据是这个信息能不能让眼前这个人采取行动——不能，它就不该出现在弹窗和状态行里。
+/// 地址没有消失：它还在 [`PlaybackFailure::detail`]（已按 [`redact_url_secrets`] 切断查询串），
+/// 等日志出口落地就直接写那边。
+///
+/// 边界按 `://` 定位而不是按空格切：文案里 `加载歌单失败：https://…` 这种前缀与地址之间
+/// 没有空格，按 token 删会把人话前半句一起删掉。
+pub fn strip_urls_for_user(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        // 起点：scheme 的第一个字符，往左只吃 ASCII（遇到中文标点就停，保证落在字符边界上）。
+        let bytes = rest.as_bytes();
+        let mut start = at;
+        while start > 0 {
+            let prev = bytes[start - 1];
+            if prev.is_ascii_alphanumeric() || matches!(prev, b'+' | b'-' | b'.') {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        out.push_str(&rest[..start]);
+        // 终点：下一个空白或右括号。地址尾部粘连的 `:` 属于同一个片段，一并摘掉。
+        let tail = &rest[at..];
+        let span = tail
+            .find(|c: char| c.is_whitespace() || c == ')' || c == '）')
+            .unwrap_or(tail.len());
+        rest = &rest[at + span..];
+    }
+    out.push_str(rest);
+    while out.contains("  ") {
+        out = out.replace("  ", " ");
+    }
+    while out.ends_with(&[':', '：', ' '][..]) {
+        out.pop();
+    }
+    out
 }
 
 /// 一次播放尝试的重试预算：**只有一层，且只按「这次失败值不值得再来一次」判**。
@@ -445,6 +496,43 @@ mod tests {
     #[test]
     fn default_budget_allows_three_attempts() {
         assert_eq!(PlayBudget::default().max_attempts, 3);
+    }
+
+    #[test]
+    fn user_text_drops_endpoints_but_the_log_detail_keeps_them() {
+        let raw = "soda track_v2 failed: https://api.qishui.com/luna/pc/feed/song-tab?aid=386088&track_id=7: Connection Failed: tls connection init failed: unexpected end of file (seo fallback: https://beta-luna.douyin.com/luna/h5/seo-track?track_id=7: Connection Failed: tls connection init failed: unexpected end of file)";
+        let failure = failure(SodaError::http(raw));
+        let shown = failure.for_user();
+        // 界面上不该有内部端点，也不该有查询串。
+        assert!(!shown.contains("://"), "{shown}");
+        assert!(!shown.contains("qishui.com"), "{shown}");
+        assert!(!shown.contains("aid=386088"), "{shown}");
+        // 但人话部分与因果必须留下，且括号不塌。
+        assert!(shown.contains("tls connection init failed"), "{shown}");
+        assert!(shown.contains("seo fallback"), "{shown}");
+        assert!(shown.contains("(seo fallback"), "{shown}");
+        // 日志侧仍保留地址，只切断查询串。
+        assert!(
+            failure
+                .detail
+                .contains("api.qishui.com/luna/pc/feed/song-tab?…"),
+            "{}",
+            failure.detail
+        );
+    }
+
+    #[test]
+    fn strip_handles_urls_without_a_leading_space() {
+        // 「加载歌单失败：https://…」这类模板里前缀与地址之间没有空格，前半句不能被吞。
+        assert_eq!(
+            strip_urls_for_user("加载歌单失败：https://x.test/a?b=1"),
+            "加载歌单失败"
+        );
+        assert_eq!(strip_urls_for_user("没有地址的文案"), "没有地址的文案");
+        assert_eq!(
+            strip_urls_for_user("回退（https://x.test/a）后失败"),
+            "回退（）后失败"
+        );
     }
 
     #[test]

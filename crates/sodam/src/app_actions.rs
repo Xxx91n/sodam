@@ -774,7 +774,7 @@ impl Root {
                         root.lyrics = Arc::new(Vec::new());
                         root.lyrics_active = None;
                         root.lyrics_error =
-                            Some(sodam_core::failure::redact_url_secrets(&err.to_string()));
+                            Some(sodam_core::failure::strip_urls_for_user(&err.to_string()));
                     }
                 }
                 cx.notify();
@@ -2125,7 +2125,7 @@ impl Root {
                         let stage = root.tr(stage_label(failure.stage)).to_string();
                         let mut message = root.localized(
                             "「{}」{}失败：{}",
-                            &[track.title.clone(), stage, failure.detail.clone()],
+                            &[track.title.clone(), stage, failure.for_user()],
                         );
                         if let Some(hint) = action_hint(failure.action) {
                             message.push_str(&format!("（{}）", root.tr(hint)));

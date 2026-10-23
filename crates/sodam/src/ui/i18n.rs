@@ -163,17 +163,20 @@ impl Language {
             "网络传输" => "network transfer",
             "解密落盘" => "unpacking",
             "参数" => "input",
-            "「{}」{}失败：{}" => "“{}” failed at {}: {}",
-            "连续 3 首没播出来，已暂停" => "Paused after 3 tracks failed to play.",
-            "登录状态可能已过期，请在设置里重新登录" => {
-                "Sign-in may have expired; sign in again in Settings."
+            "连续 3 首没播出来，已暂停" => "Paused after 3 tracks failed.",
+            "暂时连不上，检查网络后重试。" => "Can't connect. Check your network and retry.",
+            "出现了一点问题，检查网络后重试。" => "Something went wrong. Check your network.",
+            "出现了一点问题，请重试。" => "Something went wrong. Try again.",
+            "没能保存，检查磁盘空间后重试。" => "Couldn't save. Check your disk space.",
+            "登录已过期，请重新登录。" => "Sign-in expired. Sign in again.",
+            "这首歌暂时放不出来。签名服务不可用，可在设置里更换。" => {
+                "This song can't play now. Change the signer service in Settings."
             }
-            "签名服务不可用：可在设置里改签名服务地址与令牌，或在本机运行 libmssdk" => {
-                "The signer service is unavailable. Set your own signer URL and token in Settings, or run libmssdk locally."
-            }
-            "当前账号没有这首的整曲权益" => "Your account has no full-track rights for this song.",
-            "本地缓存写入失败，检查磁盘空间" => {
-                "Failed to write the local cache; check free disk space."
+            "这首歌暂时放不出来。" => "This song can't play now.",
+            "这首歌在你的账号下无法播放。" => "Your account can't play this song.",
+            "本地缓存写入失败，检查磁盘空间。" => "Cache write failed. Check disk space.",
+            "打开验证窗口失败，请改用官方客户端导出 Cookie。" => {
+                "Couldn't open the verification window. Export your cookie from the official app instead."
             }
             "保存失败：{err}" => "Save failed: {err}",
             "暂停" => "Pause",

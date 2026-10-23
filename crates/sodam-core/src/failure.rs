@@ -62,7 +62,8 @@ pub struct PlaybackFailure {
     pub retryability: Retryability,
     pub action: RecoveryAction,
     /// 给日志与「展开详情」用的原文：已按 [`redact_url_secrets`] 切断查询串，但仍保留接口地址。
-    /// 界面文案不要直接用它——用 [`PlaybackFailure::for_user`]。
+    /// 界面文案不要直接用它——用户只看 [`strip_urls_for_user`] 之后的说法，
+    /// 而真正给人读的那句由界面按 `stage` / `action` 组出来。
     pub detail: String,
 }
 
@@ -79,12 +80,6 @@ impl PlaybackFailure {
             action,
             detail: redact_url_secrets(&detail.into()),
         }
-    }
-
-    /// 给人看的那份：接口地址整段去掉，只留发生了什么。带地址的原文留在 [`Self::detail`]，
-    /// 那是日志与「展开详情」的料。
-    pub fn for_user(&self) -> String {
-        strip_urls_for_user(&self.detail)
     }
 }
 
@@ -502,7 +497,7 @@ mod tests {
     fn user_text_drops_endpoints_but_the_log_detail_keeps_them() {
         let raw = "soda track_v2 failed: https://api.qishui.com/luna/pc/feed/song-tab?aid=386088&track_id=7: Connection Failed: tls connection init failed: unexpected end of file (seo fallback: https://beta-luna.douyin.com/luna/h5/seo-track?track_id=7: Connection Failed: tls connection init failed: unexpected end of file)";
         let failure = failure(SodaError::http(raw));
-        let shown = failure.for_user();
+        let shown = strip_urls_for_user(&failure.detail);
         // 界面上不该有内部端点，也不该有查询串。
         assert!(!shown.contains("://"), "{shown}");
         assert!(!shown.contains("qishui.com"), "{shown}");

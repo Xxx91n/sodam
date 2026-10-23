@@ -142,7 +142,8 @@ impl PlaybackEngine {
             .spawn(move || audio_thread(rx, state, open_output, probe));
         if let Err(err) = spawned {
             if let Ok(mut snap) = snapshot.lock() {
-                snap.error = format!("音频线程启动失败：{err}");
+                eprintln!("[failure] 音频线程启动失败: {err}");
+                snap.error = "音频播放没能启动，请重启应用。".to_string();
             }
         }
         Self {
@@ -242,6 +243,12 @@ fn set_error(state: &Arc<Mutex<PlaybackSnapshot>>, message: String) {
     }
 }
 
+/// 引擎侧的技术原文只进日志（`eprintln`，日志出口落地后写文件），
+/// 界面拿到的 `message` 必须是不带驱动/解码器术语的一句人话。
+fn log_engine_failure(context: &str, detail: impl std::fmt::Display) {
+    eprintln!("[failure] {context}: {detail}");
+}
+
 fn initial_volume(saved: f32, override_value: Option<&str>) -> f32 {
     override_value
         .and_then(|value| value.trim().parse::<f32>().ok())
@@ -336,8 +343,9 @@ fn rebuild_player_at(
 fn open_output(errors: OutputErrors) -> OutputResult {
     rodio::DeviceSinkBuilder::from_default_device()?
         .with_error_callback(move |err| {
+            eprintln!("[failure] 音频设备连接中断: {err}");
             if let Ok(mut errors) = errors.lock() {
-                *errors = Some(format!("音频设备连接中断：{err}"));
+                *errors = Some("音频输出中断了。".to_string());
             }
         })
         .open_sink_or_fallback()
@@ -423,7 +431,8 @@ fn audio_thread(
     let mut output = match open_output(stream_error.clone()) {
         Ok(device) => Some(device),
         Err(err) => {
-            set_error(&state, format!("音频设备不可用：{err}"));
+            log_engine_failure("音频设备不可用", &err);
+            set_error(&state, "找不到可用的音频设备。".to_string());
             None
         }
     };
@@ -521,7 +530,13 @@ fn audio_thread(
                     match open_output(stream_error.clone()) {
                         Ok(device) => output = Some(device),
                         Err(err) => {
-                            load_failed(&state, &track, sequence, format!("音频设备不可用：{err}"));
+                            log_engine_failure("装载时重开音频设备失败", &err);
+                            load_failed(
+                                &state,
+                                &track,
+                                sequence,
+                                "找不到可用的音频设备。".to_string(),
+                            );
                             continue;
                         }
                     }
@@ -532,20 +547,27 @@ fn audio_thread(
                 let file = match std::fs::File::open(&path) {
                     Ok(file) => file,
                     Err(err) => {
-                        load_failed(&state, &track, sequence, format!("打开音频文件失败：{err}"));
+                        log_engine_failure("打开音频文件失败", &err);
+                        load_failed(
+                            &state,
+                            &track,
+                            sequence,
+                            "没能读出这首歌的音频文件。".to_string(),
+                        );
                         continue;
                     }
                 };
                 let decoder = match rodio::Decoder::try_from(file) {
                     Ok(decoder) => decoder,
                     Err(err) => {
-                        // 无效缓存不能永久冒充命中；下一次播放重新下载，而不是反复解码坏文件。
+                        // 无效缓存不能永久冒充命中；下一次播放重新下载，而不是反复读坏文件。
+                        log_engine_failure("解码失败（文件可能未解密）", &err);
                         crate::cache::invalidate_audio(&path);
                         load_failed(
                             &state,
                             &track,
                             sequence,
-                            format!("解码失败（文件可能未解密）：{err}"),
+                            "这首歌的文件读不出来，正在重新获取。".to_string(),
                         );
                         continue;
                     }
@@ -731,7 +753,8 @@ fn follow_default_output(
     let new_player = match rebuild_player_at(device.mixer(), &path, position, volume, paused) {
         Ok(player) => player,
         Err(err) => {
-            set_error(state, format!("切换音频设备后重新打开失败：{err}"));
+            log_engine_failure("切换音频设备后重新打开失败", &err);
+            set_error(state, "切换音频设备后没能继续播放。".to_string());
             return;
         }
     };

@@ -24,6 +24,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// 远程读取类失败的统一说法：读不到歌单、收藏、搜索、推荐都是这一句。
+pub(crate) const REMOTE_TEXT: &str = "出现了一点问题，检查网络后重试。";
+/// 本地保存/写入类失败的统一说法：这类失败和网络无关。
+pub(crate) const SAVE_TEXT: &str = "没能保存，检查磁盘空间后重试。";
+/// 既不是网络也不是写入的失败（例如本地编码出错）：不指责任何一方，只说重试。
+pub(crate) const RETRY_TEXT: &str = "出现了一点问题，请重试。";
+
 /// 封面请求池：有界并发 + 去重 + 队列上限。
 ///
 /// 直接对整页每张封面发请求（尤其是 300 首的歌单）会把网络和 CDN 打爆，
@@ -1126,6 +1133,31 @@ impl Root {
         self.show_status();
     }
 
+    /// 技术原文的唯一去处：现在只进终端（发布版是 GUI 子系统程序，等于看不到），
+    /// 日志出口落地后由它写文件。界面文案一律不用它——用户只看人话。
+    ///
+    /// 进这里的内容已切断查询串：日志里也不许出现签名 token。
+    pub(crate) fn log_failure(&self, context: &str, error: impl std::fmt::Display) {
+        eprintln!(
+            "[failure] {context}: {}",
+            sodam_core::failure::redact_url_secrets(&error.to_string())
+        );
+    }
+
+    /// 记录技术原文，并返回给用户看的那一句。
+    ///
+    /// 界面文案一律走这里，不再复述 `{err}`：普通用户看 `tls connection init failed`
+    /// 得不到任何行动信息，而它也不该被藏进折叠区——原文的去处是日志。
+    pub(crate) fn failure_text(
+        &self,
+        context: &str,
+        error: impl std::fmt::Display,
+        text: &'static str,
+    ) -> String {
+        self.log_failure(context, error);
+        self.tr(text).to_string()
+    }
+
     /// 重要成功结果：状态 + 全局轻提示。
     #[allow(dead_code)] // 公共 API 给不重复的 user-triggered success
     pub fn notify_success(&mut self, text: impl Into<String>) -> u64 {
@@ -1198,11 +1230,7 @@ impl Root {
                 self.set_status_text(status);
             }
             Err(err) => {
-                let message = if self.language.is_zh() {
-                    language.textf("语言已切换，但保存失败：{err}", &[err.to_string()])
-                } else {
-                    format!("Language switched, but saving failed: {err}")
-                };
+                let message = self.failure_text("语言已切换，但保存失败", &err, SAVE_TEXT);
                 self.notify_warning_once("language-save-failed", message);
             }
         }

@@ -22,6 +22,9 @@ pub enum Stage {
     Unpack,
     /// 调用方参数本身就不合法。
     Input,
+    /// 传输层出错，但分不清是地址解析还是音频体读取——握手/DNS 类失败两处都可能发生，
+    /// 与其猜一个阶段，不如如实说「网络传输」。上游补了相位之后这个变体应当消失。
+    Network,
 }
 
 /// 该失败能否自动重试。
@@ -85,6 +88,7 @@ impl fmt::Display for PlaybackFailure {
             Stage::Transfer => "音频体传输",
             Stage::Unpack => "解密落盘",
             Stage::Input => "参数",
+            Stage::Network => "网络传输",
         };
         write!(f, "{stage}失败：{}", self.detail)
     }
@@ -181,8 +185,24 @@ fn classify_http(detail: &str) -> PlaybackFailure {
         Some(500..=599) => (Retryability::Transient, RecoveryAction::Nothing),
         Some(_) => (Retryability::Never, RecoveryAction::Nothing),
         None => {
-            // 没有状态码的就是传输层：超时 / 连接重置 / DNS。
-            if detail.contains("timed out") || detail.contains("timeout") {
+            // 没有状态码的都是传输层。判据必须盖住真实的握手类文本——本机实测到的就是
+            // `Connection Failed: tls connection init failed: unexpected end of file`；
+            // 只认 "timeout" 会把这类抖动误判成永久错误，一次都不重试。
+            let lower = detail.to_ascii_lowercase();
+            let transport = [
+                "timed out",
+                "timeout",
+                "tls",
+                "connection",
+                "dns",
+                "failed to lookup address",
+                "end of file",
+                "broken pipe",
+                "reset by peer",
+            ]
+            .iter()
+            .any(|marker| lower.contains(marker));
+            if transport {
                 (Retryability::Transient, RecoveryAction::Nothing)
             } else {
                 (Retryability::Never, RecoveryAction::Nothing)
@@ -190,11 +210,15 @@ fn classify_http(detail: &str) -> PlaybackFailure {
         }
     };
     let stage = if detail.contains("http request failed") {
-        // 这个前缀是 `get_full` / `get_reader` 在**拿到状态码**时产出的；读体阶段一般不会有
-        // 状态码（响应头已经过了），所以带前缀的归地址解析，纯传输层错误归音频体传输。
+        // 这个前缀是 `get_full` / `get_reader` 在**拿到状态码**时产出的，归地址解析；
         Stage::ResolveStream
-    } else {
+    } else if detail.contains("reading response") || detail.contains("reading body") {
+        // 已经在读响应体：明确的音频体传输故障。
         Stage::Transfer
+    } else {
+        // 握手、DNS、连接重置这类错误在解析地址和读体两处都会出现，
+        // 上游没带相位就是分不出来，别装作知道。
+        Stage::Network
     };
     PlaybackFailure::new(stage, retryability, action, detail)
 }
@@ -340,9 +364,26 @@ mod tests {
 
     #[test]
     fn unknown_shapes_default_to_no_retry() {
-        // 「不默认重试」：认不出形态的 HTTP 错误不能变成盲试。
-        let odd = failure(SodaError::http("connection reset by peer on a socket"));
+        // 「不默认重试」：认不出形态、也不是传输层的错误不能变成盲试。
+        let odd = failure(SodaError::http("unexpected status line from upstream"));
         assert_eq!(odd.retryability, Retryability::Never);
+    }
+
+    #[test]
+    fn tls_handshake_failures_are_transient_not_permanent() {
+        // 断网注入时实测到的错误文本（歌词接口）。它作为**测试输入**有效——这类握手断流
+        // 真机上确实会出现——但不代表用户的真实故障分布，别拿它当归因证据。
+        let tls = SodaError::http(
+            "soda track_v2 failed: https://api.qishui.com/luna/pc/track_v2?aid=386088&track_id=6696408449359562754: Connection Failed: tls connection init failed: unexpected end of file",
+        );
+        let classified = failure(tls);
+        assert_eq!(classified.retryability, Retryability::Transient);
+        // 地址解析与音频体传输都可能发生握手失败，分不出来就明说分不出来。
+        assert_eq!(classified.stage, Stage::Network);
+        // 同一条文本里的接口查询串必须被脱敏。
+        let detail = classified.detail.as_str();
+        assert!(!detail.contains("aid=386088"), "{detail}");
+        assert!(detail.contains("api.qishui.com/luna/pc/track_v2?…"));
     }
 
     #[test]

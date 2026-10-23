@@ -1122,7 +1122,7 @@ impl Root {
 
     /// 普通操作反馈：只进入底部状态行，不触发全局 message。
     pub fn set_status_text(&mut self, text: impl Into<String>) {
-        self.status = text.into();
+        self.status = sodam_core::failure::redact_url_secrets(&text.into());
         self.show_status();
     }
 
@@ -1165,7 +1165,9 @@ impl Root {
         text: String,
         key: Option<&str>,
     ) -> u64 {
-        self.status = text;
+        // 上屏前统一脱敏：libresoda 会把带签名 token 的 URL 拼进错误文本，
+        // 任何一条路径（播放、歌词、曲库…）都不该把它送上界面。
+        self.status = sodam_core::failure::redact_url_secrets(&text);
         self.show_status();
         self.push_message_with_key(
             kind,

@@ -160,6 +160,7 @@ impl Language {
             "试听" => "Preview",
             "地址解析（含签名）" => "stream resolution",
             "音频体传输" => "audio transfer",
+            "网络传输" => "network transfer",
             "解密落盘" => "unpacking",
             "参数" => "input",
             "「{}」{}失败：{}" => "“{}” failed at {}: {}",

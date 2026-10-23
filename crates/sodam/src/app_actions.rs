@@ -773,7 +773,8 @@ impl Root {
                     Err(err) => {
                         root.lyrics = Arc::new(Vec::new());
                         root.lyrics_active = None;
-                        root.lyrics_error = Some(err.to_string());
+                        root.lyrics_error =
+                            Some(sodam_core::failure::redact_url_secrets(&err.to_string()));
                     }
                 }
                 cx.notify();
@@ -2239,6 +2240,7 @@ fn stage_label(stage: Stage) -> &'static str {
         Stage::Transfer => "音频体传输",
         Stage::Unpack => "解密落盘",
         Stage::Input => "参数",
+        Stage::Network => "网络传输",
     }
 }
 

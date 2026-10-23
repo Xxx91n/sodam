@@ -350,7 +350,13 @@ pub struct Root {
     /// 播放错误（显示在播放栏：常驻状态条已移除，错误必须有地方可见）。
     pub playback_error: Option<String>,
     /// 连续装载失败次数（>=3 就停下，避免无限跳歌）。
+    ///
+    /// 清零判据是「真的播出去若干秒」，不是「装载完成」：见 `audible_again`。
     pub(crate) consecutive_failures: u32,
+    /// 连败封顶闸门：打开后自动续播（播完切下一首、预取巡检）全部停住，
+    /// 直到用户主动播放。只写 `playing = false` 拦不住——引擎仍在出声，
+    /// 「已暂停」就成了谎话。
+    pub(crate) playback_halted: bool,
     /// 正在预取的曲目 id 集合（多首并行去重；预取结果只写缓存，不改 UI）。
     pub(crate) prefetch_inflight: HashSet<String>,
     /// 预取失败表（曲目 id →（最近失败时刻，可否重试））。
@@ -466,6 +472,7 @@ impl Root {
             play_seq: 0,
             playback_error: None,
             consecutive_failures: 0,
+            playback_halted: false,
             playing: false,
             recommendation: None,
             loading_recommendation: false,

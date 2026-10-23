@@ -198,6 +198,13 @@ impl Root {
                 if snap.playing || root.pending_track.is_some() {
                     cx.notify();
                 }
+                // 熔断复位：装载成功不算「缓过来」，声音真的播出去若干秒才算。
+                // 之前在这里写 `consecutive_failures = 0`（装载完成），于是「能装载、
+                // 不出声」的坏文件把连败一直压在阈值下，封顶永远触发不了。
+                let errored = !snap.error.is_empty();
+                if audible_again(snap.playing, snap.position_seconds, errored) {
+                    root.consecutive_failures = 0;
+                }
                 // 播完自动下一首：按序号判断（循环同一首也不会漏切）。
                 // 注意：正在装载下一首（pending）时「播完」属于旧曲目，
                 // 只消费事件不推进——否则会把 pending 的那首跳过去（收尾瞬间
@@ -209,13 +216,16 @@ impl Root {
                     &mut root.last_finished_seq,
                     &mut root.last_seek_seq,
                 );
-                if snap.finished && current && root.pending_track.is_none() {
+                // 封顶闸门打开时不推进：连续几首都没播出来还往后翻，就是在替用户决定
+                // 「再试几首」，而网络恢复该由用户按下播放来确认。
+                let should_advance = current && !root.playback_halted;
+                if snap.finished && should_advance && root.pending_track.is_none() {
                     root.next_track(cx);
                 }
                 // 预取巡检：每 25 拍（约 5s）补一次，覆盖 append/remove 等
                 // 队列变更路径（spawn_prefetch 自身会去重，空转开销极小）
                 root.prefetch_patrol = root.prefetch_patrol.wrapping_add(1);
-                if root.prefetch_patrol % 25 == 0 {
+                if root.prefetch_patrol % 25 == 0 && !root.playback_halted {
                     root.prefetch_failed.retain(|_, (failed_at, retryability)| {
                         *retryability == Retryability::Never
                             || failed_at.elapsed() < PREFETCH_RETRY_COOLDOWN
@@ -2006,10 +2016,32 @@ impl Root {
         .detach();
     }
 
+    /// 连败封顶落闸：把声音真的停下。
+    ///
+    /// 只写 `playing = false` 拦不住任何事——引擎照旧出声，播完照旧翻下一首，
+    /// 于是「连续 3 首没播出来，已暂停」成了谎话（真机踩到）。
+    pub(crate) fn halt_playback(&mut self) {
+        self.playback_halted = true;
+        self.playing = false;
+        self.engine.pause();
+    }
+
+    /// 用户明确要求继续播放：熔断回到半开，连败重新数。
+    ///
+    /// 只在「本来落着闸」时复位，自动跳歌那条路（还没到封顶阈值）不会路过这里，
+    /// 否则每跳一首都把连败清零，封顶永远够不着。
+    pub(crate) fn release_playback_halt(&mut self) {
+        if self.playback_halted {
+            self.playback_halted = false;
+            self.consecutive_failures = 0;
+        }
+    }
+
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
         if self.pending_track.is_some() {
             return;
         }
+        self.release_playback_halt();
         let snapshot = self.engine.snapshot();
         if snapshot.track_id.is_empty()
             || !snapshot.error.is_empty()
@@ -2050,6 +2082,9 @@ impl Root {
         if std::env::var("SODAM_PLAYER_LOG").is_ok() {
             eprintln!("[player] 开始装载：{}（id={}）", track.title, track.id);
         }
+        // 走到这里就是一次被明确要求（或被允许）的播放尝试：闸门若开着，说明是用户
+        // 按了播放/切歌，熔断回半开。自动续播路径在巡检处已被闸门拦住。
+        self.release_playback_halt();
         self.playing = true;
         self.play_seq = self.play_seq.wrapping_add(1);
         let request_seq = self.play_seq;
@@ -2112,7 +2147,6 @@ impl Root {
                         if std::env::var("SODAM_PLAYER_LOG").is_ok() {
                             eprintln!("[player] 装载完成：{}", track.title);
                         }
-                        root.consecutive_failures = 0;
                         root.playback_error = None;
                         // 记录真实播放历史（去重最近一条，避免重复刷屏）
                         if root.played_history.last().map(String::as_str) != Some(track.id.as_str())
@@ -2140,8 +2174,8 @@ impl Root {
                         root.notify_warning_once("track-stream-failed", message);
                         if should_skip_to_next(&failure) {
                             root.consecutive_failures += 1;
-                            if root.consecutive_failures >= 3 {
-                                root.playing = false;
+                            if root.consecutive_failures >= PLAY_FAILURE_HALT_AFTER {
+                                root.halt_playback();
                                 root.notify_error_once(
                                     "consecutive-stream-failures",
                                     root.tr("连续 3 首没播出来，已暂停").to_string(),
@@ -2149,13 +2183,13 @@ impl Root {
                             } else if !root.queue.is_empty() {
                                 root.next_track(cx);
                             } else {
-                                root.playing = false;
+                                root.halt_playback();
                             }
                         } else {
                             // 全局性故障（登录 / 签名服务 / 权益 / 磁盘）：换一首也一样失败。
                             // 停下并把修复动作留在状态里，别用连续跳过把全局故障
                             // 伪装成「这几首运气不好」。
-                            root.playing = false;
+                            root.halt_playback();
                         }
                     }
                 }
@@ -2281,6 +2315,23 @@ fn should_skip_to_next(failure: &PlaybackFailure) -> bool {
         failure.action,
         RecoveryAction::PickAnother | RecoveryAction::Nothing
     )
+}
+
+/// 连败封顶阈值：连续这么多首装载失败就停下，别再替用户往后翻。
+const PLAY_FAILURE_HALT_AFTER: u32 = 3;
+/// 熔断复位判据：声音播到这么多秒才算「真的缓过来」。
+const PLAYBACK_RECOVER_SECONDS: f64 = 3.0;
+
+/// 这一拍算不算「真的播出去了」。
+///
+/// 判据刻意不是「装载完成」：文件交给引擎和听众听见是两件事。用装载成功清零连败，
+/// 「能装载、不出声」的坏文件会把计数一直压在阈值下，封顶永远触发不了——
+/// 熔断复位要的是「Closed 态恢复」那种语义，见 Circuit Breaker 模式。
+///
+/// 入参取原始值而不是 `&PlaybackSnapshot`：那个结构体有 `pub(crate)` 字段，
+/// 在本 crate 里连 `..Default::default()` 都构造不出来，判据就不该依赖它。
+fn audible_again(playing: bool, position_seconds: f64, errored: bool) -> bool {
+    playing && !errored && position_seconds >= PLAYBACK_RECOVER_SECONDS
 }
 
 /// 预取数量：环境变量 `SODAM_PREFETCH_COUNT`（默认 3，解析失败/为 0 用默认）。
@@ -2419,5 +2470,28 @@ mod external_open_tests {
             &mut last_finished,
             &mut last_seek
         ));
+    }
+}
+
+#[cfg(test)]
+mod playback_budget_tests {
+    use super::*;
+    use crate::ui::i18n::Language;
+
+    /// 复位判据是「播出去了」，不是「装载完成了」。
+    #[test]
+    fn streak_resets_only_on_audible_progress() {
+        assert!(audible_again(true, PLAYBACK_RECOVER_SECONDS, false));
+        assert!(!audible_again(true, PLAYBACK_RECOVER_SECONDS - 0.1, false));
+        assert!(!audible_again(false, 90.0, false), "暂停中不该复位");
+        assert!(!audible_again(true, 90.0, true), "带错误不该复位");
+    }
+
+    /// 封顶的数字改动必须连带那句用户看到的文案。
+    #[test]
+    fn halt_threshold_matches_the_copy() {
+        let shown = Language::Chinese.text("连续 3 首没播出来，已暂停");
+        let hits = shown.contains(&PLAY_FAILURE_HALT_AFTER.to_string());
+        assert!(hits, "{shown}");
     }
 }

@@ -76,18 +76,10 @@ impl Language {
             "推荐队列" => "Recommendation queue",
             "请先在「设置 → 账户」扫码登录" => "Sign in with QR code in Settings → Account.",
             "语言已切换为中文" => "Language switched to Chinese",
-            "语言已切换，但保存失败：{err}" => "Language switched, but saving failed: {err}",
             "就绪" => "Ready",
-            "创建二维码失败：{err}" => "Failed to create QR code: {err}",
-            "二维码编码失败：{err}" => "Failed to encode QR code: {err}",
             "等待扫码…" => "Waiting for scan…",
-            "轮询异常（会自动重试）：{err}" => "Polling error (retrying): {err}",
-            "登录成功但保存失败：{err}" => "Signed in, but saving failed: {err}",
             "已打开二次验证窗口，请在其中完成验证" => {
                 "Second-verification window opened. Complete the verification there."
-            }
-            "打开二次验证窗口失败：{err}，请改用官方客户端导出 Cookie" => {
-                "Failed to open the verification window: {err}. Export a cookie from the official client instead."
             }
             "正在播放的曲目不能从队列移除，可直接点「下一首」" => {
                 "The playing track can't be removed from the queue. Use Next instead."
@@ -95,13 +87,9 @@ impl Language {
             "已登录：{}（{}）" => "Signed in: {} ({})",
             "账号" => "Account",
             "{}；音质已按权益自动设为 {quality}" => "{}; quality set to {}",
-            "音质偏好保存失败：{err}" => "Failed to save audio quality: {err}",
-            "保存音质设置失败：{err}" => "Failed to save audio quality: {err}",
-            "读取账号信息失败：{err}" => "Failed to load account: {err}",
             "主题已切换为{}" => "Theme switched to {}",
             "浅色" => "Light",
             "深色" => "Dark",
-            "主题已切换，但保存失败：{err}" => "Theme switched, but saving failed: {err}",
             "窗口" => "Window",
             "Linux 下是否自绘最小化 / 最大化 / 关闭按钮" => {
                 "Whether SodaM draws its own minimize / maximize / close buttons on Linux"
@@ -121,11 +109,7 @@ impl Language {
             "窗口按钮：自动（跟随桌面）" => "Window controls: auto (follow desktop)",
             "窗口按钮：总是显示" => "Window controls: always shown",
             "窗口按钮：不显示" => "Window controls: hidden",
-            "窗口按钮已切换，但保存失败：{err}" => {
-                "Window controls changed, but saving failed: {err}"
-            }
             "主题已恢复为跟随系统" => "Theme restored to system",
-            "已切换为跟随系统，但保存失败：{err}" => "Switched to system theme, but saving failed: {err}",
             "「{}」没有可用歌词" => "No lyrics available for {}",
             "「{}」歌词已加载" => "Lyrics loaded for {}",
             "已切换到{}队列" => "Switched to {} queue",
@@ -133,27 +117,17 @@ impl Language {
             "正在加载更多探索歌单…" => "Loading more discovery playlists…",
             "没有更多探索歌单" => "No more discovery playlists",
             "探索歌单已追加 {added} 张" => "Added {} discovery playlists",
-            "读取听歌模式失败：{err}" => "Failed to load listening modes: {err}",
             "正在加载「{}」队列…" => "Loading {} queue…",
-            "加载听歌模式队列失败：{err}" => "Failed to load listening-mode queue: {err}",
             "推荐" => "Discover",
-            "加载推荐队列失败：{err}" => "Failed to load recommendation queue: {err}",
             "正在加载电台「{}」…" => "Loading {} radio…",
             "电台「{}」没有可播放曲目" => "Radio {} has no playable tracks",
-            "加载电台失败：{err}" => "Failed to load radio: {err}",
             "歌单「{}」没有可播放曲目" => "Playlist {} has no playable tracks",
-            "加载歌单失败：{err}" => "Failed to load playlist: {err}",
             "推荐队列已追加 {added} 首" => "Added {} recommendation tracks",
-            "加载更多推荐失败：{err}" => "Failed to load more recommendations: {err}",
             "已退出登录" => "Signed out",
-            "已退出，但保存配置失败：{err}" => "Signed out, but saving failed: {err}",
-            "读取歌单失败：{err}" => "Failed to load playlist: {err}",
             "已收藏：{}" => "Liked: {}",
             "已取消收藏：{}" => "Unliked: {}",
-            "读取收藏失败：{err}" => "Failed to load liked music: {err}",
             "已入队：{title}" => "Queued: {title}",
             "搜索歌单共 {count} 首" => "Search playlist: {} tracks",
-            "读取搜索歌单失败：{err}" => "Failed to load search playlist: {err}",
             "下一首将播放：{title}" => "Play next: {}",
             "播放中" => "Playing",
             "已暂停" => "Paused",
@@ -178,7 +152,6 @@ impl Language {
             "打开验证窗口失败，请改用官方客户端导出 Cookie。" => {
                 "Couldn't open the verification window. Export your cookie from the official app instead."
             }
-            "保存失败：{err}" => "Save failed: {err}",
             "暂停" => "Pause",
             "播放" => "Play",
             "上一首" => "Previous Track",
@@ -202,10 +175,6 @@ impl Language {
             }
             "快捷键已更新" => "Shortcut updated",
             "快捷键已恢复默认" => "Shortcut reset to default",
-            "快捷键已更新，但保存失败：{err}" => "Shortcut updated, but saving failed: {err}",
-            "快捷键已恢复默认，但保存失败：{err}" => {
-                "Shortcut reset to default, but saving failed: {err}"
-            }
             "聚焦搜索框" => "Focus the search box",
             "徽标键由系统占用，请换个组合键" => {
                 "The Windows/Super key belongs to the system — pick another combination"
@@ -220,9 +189,6 @@ impl Language {
             "该组合键由 macOS 菜单保留，不能绑定" => "Reserved by the macOS menu",
             "未在播放" => "Nothing playing",
             "「{}」共 {} 条结果" => "{}: {} results",
-            "读取音乐人失败：{err}" => "Failed to load artist: {err}",
-            "加载更多音乐人歌曲失败：{err}" => "Failed to load more artist tracks: {err}",
-            "读取专辑失败：{err}" => "Failed to load album: {err}",
             "来自汽水的推荐" => "Recommended for you",
             "按场景选歌" => "Choose by scene",
             "音乐人详情" => "Artist Details",
@@ -236,9 +202,6 @@ impl Language {
             "{} 首" => "{} tracks",
             "用户 {} · {}" => "User {} · {}",
             "语言已恢复为跟随系统" => "Language restored to system",
-            "语言已恢复为跟随系统，但保存失败：{err}" => {
-                "Language restored to system, but saving failed: {err}"
-            }
             "共 {}（歌曲 {} 首 {} / 封面 {} 张 {}）" => "Total {} ({} songs {}, {} covers {})",
             "签名服务：{}" => "Signer: {}",
             "配置：{}" => "Config: {}",
@@ -384,18 +347,10 @@ impl Language {
             "推荐队列" => "Recommendation queue",
             "请先在「设置 → 账户」扫码登录" => "Sign in with QR code in Settings → Account.",
             "语言已切换为中文" => "Language switched to Chinese",
-            "语言已切换，但保存失败：{err}" => "Language switched, but saving failed: {err}",
             "就绪" => "Ready",
-            "创建二维码失败：{err}" => "Failed to create QR code: {err}",
-            "二维码编码失败：{err}" => "Failed to encode QR code: {err}",
             "等待扫码…" => "Waiting for scan…",
-            "轮询异常（会自动重试）：{err}" => "Polling error (retrying): {err}",
-            "登录成功但保存失败：{err}" => "Signed in, but saving failed: {err}",
             "已打开二次验证窗口，请在其中完成验证" => {
                 "Second-verification window opened. Complete the verification there."
-            }
-            "打开二次验证窗口失败：{err}，请改用官方客户端导出 Cookie" => {
-                "Failed to open the verification window: {err}. Export a cookie from the official client instead."
             }
             "正在播放的曲目不能从队列移除，可直接点「下一首」" => {
                 "The playing track can't be removed from the queue. Use Next instead."
@@ -403,14 +358,10 @@ impl Language {
             "已登录：{}（{}）" => "Signed in: {} ({})",
             "非 VIP" => "Non-VIP",
             "{}；音质已按权益自动设为 {quality}" => "{}; quality set to {quality}",
-            "音质偏好保存失败：{err}" => "Failed to save audio quality: {err}",
-            "读取账号信息失败：{err}" => "Failed to load account: {err}",
             "主题已切换为{}" => "Theme switched to {}",
             "浅色" => "light",
             "深色" => "dark",
-            "主题已切换，但保存失败：{err}" => "Theme switched, but saving failed: {err}",
             "主题已恢复为跟随系统" => "Theme restored to system",
-            "已切换为跟随系统，但保存失败：{err}" => "Switched to system theme, but saving failed: {err}",
             "正在读取「{}」歌词…" => "Loading lyrics for “{}”…",
             "「{}」没有可用歌词" => "No lyrics available for “{}”",
             "「{}」歌词已加载" => "Lyrics loaded for “{}”",
@@ -419,32 +370,23 @@ impl Language {
             "正在加载更多探索歌单…" => "Loading more discovery playlists…",
             "没有更多探索歌单" => "No more discovery playlists",
             "探索歌单已追加 {} 张" => "Added {} discovery playlists",
-            "读取听歌模式失败：{err}" => "Failed to load listening modes: {err}",
             "「{}」队列" => "{} queue",
             "正在加载「{}」队列…" => "Loading {} queue…",
-            "加载听歌模式队列失败：{err}" => "Failed to load listening-mode queue: {err}",
             "已准备播放：{}" => "Ready to play: {}",
-            "加载推荐队列失败：{err}" => "Failed to load recommendation queue: {err}",
             "「{}」电台" => "{} radio",
             "正在加载电台「{}」…" => "Loading radio “{}”…",
             "电台「{}」没有可播放曲目" => "Radio “{}” has no playable tracks",
-            "加载电台失败：{err}" => "Failed to load radio: {err}",
             "正在加载歌单「{}」…" => "Loading playlist “{}”…",
             "歌单「{}」没有可播放曲目" => "Playlist “{}” has no playable tracks",
-            "加载歌单失败：{err}" => "Failed to load playlist: {err}",
             "推荐队列已追加 {} 首" => "Added {} recommendation tracks",
-            "加载更多推荐失败：{err}" => "Failed to load more recommendations: {err}",
             "已退出登录" => "Signed out",
-            "已退出，但保存配置失败：{err}" => "Signed out, but saving failed: {err}",
             "共 {} 个歌单" => "{} playlists",
             "已收藏：{}" => "Liked: {}",
             "已取消收藏：{}" => "Unliked: {}",
             "我喜欢的音乐：{} 首" => "Liked Music: {} tracks",
-            "读取收藏失败：{err}" => "Failed to load liked music: {err}",
             "已入队：{}" => "Queued: {}",
             "正在读取歌单「{}」…" => "Loading playlist “{}”…",
             "搜索歌单共 {} 首" => "Search playlist: {} tracks",
-            "读取搜索歌单失败：{err}" => "Failed to load search playlist: {err}",
             "下一首将播放：{}" => "Play next: {}",
             "歌单" => "Playlist",
             "歌单共 {} 首" => "Playlist: {} tracks",
@@ -452,7 +394,6 @@ impl Language {
             "已暂停" => "Paused",
             "正在准备播放：{}…" => "Preparing playback: {}…",
             "播放中：{}" => "Playing: {}",
-            "保存失败：{err}" => "Save failed: {err}",
             "先输入关键词再回车" => "Type a keyword and press Enter",
             "搜索历史" => "Search History",
             "仅保存在本机，最多保留 10 条；关闭后会清空记录" => {
@@ -466,13 +407,9 @@ impl Language {
             "清空" => "Clear",
             "正在搜索「{}」…" => "Searching “{}”…",
             "「{}」共 {} 条结果" => "“{}”: {} results",
-            "搜索失败：{err}" => "Search failed: {err}",
             "音乐人已加载" => "Artist loaded",
-            "读取音乐人失败：{err}" => "Failed to load artist: {err}",
             "音乐人歌曲已加载" => "Artist tracks loaded",
-            "加载更多音乐人歌曲失败：{err}" => "Failed to load more artist tracks: {err}",
             "专辑共 {} 首" => "Album: {} tracks",
-            "读取专辑失败：{err}" => "Failed to load album: {err}",
             "暂停" => "Pause",
             "播放" => "Play",
             "上一首" => "Previous Track",
@@ -517,9 +454,6 @@ impl Language {
             "自动清理较早使用的歌曲；正在播放或下载的文件暂时保留" => "Older songs are removed automatically; files in use are kept until released",
             "清空缓存" => "Clear Cache",
             "正在清理…" => "Clearing…",
-            "保存播放设置失败：{err}" => "Failed to save playback settings: {err}",
-            "清空搜索历史失败：{err}" => "Failed to clear search history: {err}",
-            "保存搜索历史设置失败：{err}" => "Failed to save search history settings: {err}",
             "音频输出长时间无响应，请重试播放" => "Audio output stopped responding. Try playing again.",
             "音频线程已退出，请重启应用" => "The audio worker stopped. Please restart the app.",
             "签名服务：{}" => "Signer: {}",
@@ -559,7 +493,6 @@ impl Language {
                 "Following system; choose a language to pin it"
             }
             "{}；音质已按权益自动设为 {}" => "{}; quality set to {}",
-            "收藏失败：{err}" => "Failed to update liked music: {err}",
             _ => key,
         }
     }

@@ -7,6 +7,7 @@ pub mod cache;
 pub mod color;
 pub mod config;
 pub mod contributors;
+pub mod failure;
 pub mod library;
 pub mod login;
 pub mod mem;

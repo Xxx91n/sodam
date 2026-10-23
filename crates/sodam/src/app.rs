@@ -342,13 +342,16 @@ pub struct Root {
     pub(crate) play_seq: u64,
     /// 播放错误（显示在播放栏：常驻状态条已移除，错误必须有地方可见）。
     pub playback_error: Option<String>,
-    /// 连续拉流失败次数（>=3 就停下，避免无限跳歌）。
+    /// 连续装载失败次数（>=3 就停下，避免无限跳歌）。
     pub(crate) consecutive_failures: u32,
     /// 正在预取的曲目 id 集合（多首并行去重；预取结果只写缓存，不改 UI）。
     pub(crate) prefetch_inflight: HashSet<String>,
-    /// 预取失败冷却表（曲目 id → 最近失败时刻）：巡检不能把永久失败的歌
-    /// （下架/地区受限）每 5 秒无限重试，60s 内不再排。
-    pub(crate) prefetch_failed: HashMap<String, std::time::Instant>,
+    /// 预取失败表（曲目 id →（最近失败时刻，可否重试））。
+    ///
+    /// 冷却类期满可以再排；**永久失败（下架 / 无权益 / 签名服务鉴权）不再自动排**——
+    /// 巡检每 5 秒重排一次就是在持续打扰全体用户共享的那台签名服务。
+    pub(crate) prefetch_failed:
+        HashMap<String, (std::time::Instant, sodam_core::failure::Retryability)>,
     /// 预取巡检节拍：心跳每 200ms 自增，每 25 拍（约 5s）补一次预取。
     pub(crate) prefetch_patrol: u32,
     /// 缓存统计快照（音频字节, 歌曲数, 封面字节, 封面张数）：

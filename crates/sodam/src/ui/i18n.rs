@@ -157,9 +157,23 @@ impl Language {
             "下一首将播放：{title}" => "Play next: {}",
             "播放中" => "Playing",
             "已暂停" => "Paused",
-            "拉流失败" => "Stream failed",
-            "「{}」拉流失败：{err}" => "Stream failed for {}: {err}",
-            "连续 3 首拉流失败，已暂停（检查网络或签名服务）" => "Paused after 3 stream failures. Check network or signer.",
+            "试听" => "Preview",
+            "地址解析（含签名）" => "stream resolution",
+            "音频体传输" => "audio transfer",
+            "解密落盘" => "unpacking",
+            "参数" => "input",
+            "「{}」{}失败：{}" => "“{}” failed at {}: {}",
+            "连续 3 首没播出来，已暂停" => "Paused after 3 tracks failed to play.",
+            "登录状态可能已过期，请在设置里重新登录" => {
+                "Sign-in may have expired; sign in again in Settings."
+            }
+            "签名服务不可用：可在设置里改签名服务地址与令牌，或在本机运行 libmssdk" => {
+                "The signer service is unavailable. Set your own signer URL and token in Settings, or run libmssdk locally."
+            }
+            "当前账号没有这首的整曲权益" => "Your account has no full-track rights for this song.",
+            "本地缓存写入失败，检查磁盘空间" => {
+                "Failed to write the local cache; check free disk space."
+            }
             "保存失败：{err}" => "Save failed: {err}",
             "暂停" => "Pause",
             "播放" => "Play",
@@ -434,8 +448,6 @@ impl Language {
             "已暂停" => "Paused",
             "正在准备播放：{}…" => "Preparing playback: {}…",
             "播放中：{}" => "Playing: {}",
-            "「{}」拉流失败：{err}" => "Stream failed for “{}”: {err}",
-            "连续 3 首拉流失败，已暂停（检查网络或签名服务）" => "Paused after 3 stream failures. Check network or signer.",
             "保存失败：{err}" => "Save failed: {err}",
             "先输入关键词再回车" => "Type a keyword and press Enter",
             "搜索历史" => "Search History",
@@ -534,9 +546,6 @@ impl Language {
             "读取收藏失败：" => "Failed to load liked music: ",
             "队列是空的：先去搜索或打开一张歌单" => {
                 "Queue is empty. Search or open a playlist."
-            }
-            "连续 3 首拉流失败，已暂停（检查网络或签名服务）" => {
-                "Paused after 3 stream failures. Check network or signer."
             }
             "SodaM" => "SodaM",
             "正在搜索…" => "Searching…",

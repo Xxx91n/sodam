@@ -30,6 +30,9 @@ pub struct PlaybackSnapshot {
     pub volume: f32,
     /// 当前曲目**实际拉到的流**音质（例：`无损 871k`）。
     pub quality: String,
+    /// 当前曲目是不是**试听片段**（不是整曲流）。界面用它显示持续标识，
+    /// 不再从 `quality` 字符串里猜——「三十秒就切歌」的真相只能在这里表达。
+    pub preview: bool,
     /// 最近一次错误（设备不可用、解码失败…），UI 直接展示
     pub error: String,
     /// 当前曲目是否已播完（UI 据此自动切下一首）
@@ -80,6 +83,8 @@ enum Command {
         path: PathBuf,
         /// 这次实际拉到的流音质（显示用）
         quality: String,
+        /// 这次拿到的是试听片段还是整曲
+        preview: bool,
         lease: crate::cache::CacheLease,
         sequence: u64,
     },
@@ -162,6 +167,7 @@ impl PlaybackEngine {
             track: Box::new(track),
             path: cached.path,
             quality: cached.quality,
+            preview: cached.preview,
             lease: cached.lease,
             sequence,
         });
@@ -257,6 +263,7 @@ fn load_failed(
         snap.position_seconds = 0.0;
         snap.duration_seconds = track.duration_seconds.max(0) as f64;
         snap.quality.clear();
+        snap.preview = false;
         snap.error = message;
         snap.playing = false;
         snap.finished = false;
@@ -502,6 +509,7 @@ fn audio_thread(
                 track,
                 path,
                 quality,
+                preview,
                 lease,
                 sequence,
             } => {
@@ -555,6 +563,7 @@ fn audio_thread(
                     snap.position_seconds = 0.0;
                     snap.duration_seconds = track.duration_seconds.max(0) as f64;
                     snap.quality = quality.clone();
+                    snap.preview = preview;
                     snap.error.clear();
                     snap.finished = false;
                     snap.seek_pending = false;
@@ -999,6 +1008,7 @@ mod tests {
             let cached = CachedTrack {
                 path: path.clone(),
                 quality: "test".into(),
+                preview: false,
                 lease: crate::cache::CacheLease::acquire(&path),
             };
             let seq = engine.load(
@@ -1037,6 +1047,7 @@ mod tests {
             lease: crate::cache::CacheLease::acquire(&path),
             path,
             quality: "test".into(),
+            preview: false,
         };
         let seq = engine.load(
             TrackItem {

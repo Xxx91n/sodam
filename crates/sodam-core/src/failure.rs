@@ -1,11 +1,11 @@
-//! 播放尝试的失败分类与重试预算（词汇见根目录 `GLOSSARY.md`）。
+//! 播放尝试的失败分类与重试预算。
 //!
 //! 一次播放尝试串联四个阶段：地址解析、签名、音频体传输、解密落盘。**只有串联它们
 //! 的这一层知道失败发生在哪儿**，所以分类在这里产出，UI 只做翻译。
 //!
-//! S1 的已知上限：libresoda 把签名服务与元数据接口的网络失败都压成 `SodaError::Http(String)`
+//! 已知上限：libresoda 把签名服务与元数据接口的网络失败都压成 `SodaError::Http(String)`
 //! 这类**无相位**的变体，因此这里只能报到「地址解析（含签名）」这一粒度，
-//! 「签名」要单列得等上游补结构化相位（见 `docs/adr/0001`）。
+//! 「签名」要单列得等上游补结构化相位。
 
 use libresoda::SodaError;
 use std::fmt;
@@ -14,7 +14,7 @@ use std::time::Duration;
 /// 失败发生的阶段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
-    /// 取回可用流及其地址，含向签名服务请求签名（S1 无法把两者分开）。
+    /// 取回可用流及其地址，含向签名服务请求签名（阶段一 无法把两者分开）。
     ResolveStream,
     /// 把音频体的字节从 CDN 搬到本地。
     Transfer,
@@ -290,7 +290,7 @@ pub fn strip_urls_for_user(text: &str) -> String {
 /// 一次播放尝试的重试预算：**只有一层，且只按「这次失败值不值得再来一次」判**。
 ///
 /// 不设总墙钟时长：那等于把刚从 libresoda 拆掉的「整首下载总时限」从另一侧装回来，
-/// 慢但仍在推进的传输会被误杀。不设「无进展时长」也不是疏忽——S1 里根本没有可观测的
+/// 慢但仍在推进的传输会被误杀。不设「无进展时长」也不是疏忽——阶段一 里根本没有可观测的
 /// 进展信号：`download_to_cache` 是一次阻塞调用，失败即删掉 `.part`，跨尝试零进度。
 /// 单次尝试内部的「卡住」由 libresoda 的空闲读超时（20s）负责；等阶段二有了
 /// 密文暂存 + `Range` 续传，字节偏移才第一次成为可读的进度，那时才谈得上无进展封顶。
@@ -471,7 +471,7 @@ mod tests {
         // 永久错误一次都不重试：再打只是打扰那台共享签名服务。
         assert_eq!(budget.next_delay(1, &permanent, 0.5), None);
         assert!(budget.next_delay(1, &transient, 0.5).is_some());
-        // 次数封顶是唯一的上限（S1 没有可观测的字节进度，见 PlayBudget 文档）。
+        // 次数封顶是唯一的上限（阶段一 没有可观测的字节进度，见 PlayBudget 文档）。
         assert_eq!(budget.next_delay(3, &transient, 0.5), None);
         // full jitter：等待时长受抖动系数缩放，且不超过上限。
         let ceiling = budget.next_delay(1, &transient, 0.999).unwrap();

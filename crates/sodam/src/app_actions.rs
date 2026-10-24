@@ -2395,7 +2395,13 @@ fn finished_event_is_current(
 ) -> bool {
     let stale_finished = seek_seq != *last_seek_seq;
     *last_seek_seq = seek_seq;
-    finished_seq != *last_finished_seq && !stale_finished
+    let current = finished_seq != *last_finished_seq && !stale_finished;
+    // 只消费一次：成功处理过完成事件后回写，否则已上报的 finished 会在
+    // 下一页心跳里继续返回 true，自动切换到下一首。
+    if current {
+        *last_finished_seq = finished_seq;
+    }
+    current
 }
 
 /// 预取并发上限：环境变量 `SODAM_PREFETCH_CONCURRENCY`（默认 2）。
@@ -2488,19 +2494,29 @@ mod external_open_tests {
             &mut last_finished,
             &mut last_seek
         ));
-        last_finished = 1;
+        assert_eq!(last_finished, 1);
+        // 同一个完成事件不能被连续两拍都消费。
+        assert!(!finished_event_is_current(
+            1,
+            0,
+            &mut last_finished,
+            &mut last_seek
+        ));
+        // seek 会让 seek 前积压的完成事件失效。
         assert!(!finished_event_is_current(
             2,
             1,
             &mut last_finished,
             &mut last_seek
         ));
+        // 首次消费后回写，让下一首的新完成事件仍能推进。
         assert!(finished_event_is_current(
             3,
             1,
             &mut last_finished,
             &mut last_seek
         ));
+        assert_eq!(last_finished, 3);
     }
 
     #[test]

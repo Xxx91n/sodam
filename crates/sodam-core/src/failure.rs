@@ -493,6 +493,32 @@ mod tests {
         assert_eq!(PlayBudget::default().max_attempts, 3);
     }
 
+    /// issue #51 的“永久失败一次远程尝试”与默认三次预算必须有可执行断言，
+    /// 不能只靠 `max_attempts` 常量碰巧保持正确。
+    #[test]
+    fn default_budget_exact_remote_attempt_counts() {
+        let budget = PlayBudget::default();
+        let permanent = PlaybackFailure::new(
+            Stage::ResolveStream,
+            Retryability::Never,
+            RecoveryAction::CheckSigner,
+            "signer error",
+        );
+        let transient = PlaybackFailure::new(
+            Stage::Network,
+            Retryability::Transient,
+            RecoveryAction::Nothing,
+            "connection reset",
+        );
+
+        // 永久失败：第 1 次尝试后就不再发生远程请求。
+        assert_eq!(budget.next_delay(1, &permanent, 0.5), None);
+        // 瞬时失败：前两次失败后重试，完成第 3 次尝试后停止。
+        assert!(budget.next_delay(1, &transient, 0.5).is_some());
+        assert!(budget.next_delay(2, &transient, 0.5).is_some());
+        assert_eq!(budget.next_delay(3, &transient, 0.5), None);
+    }
+
     #[test]
     fn user_text_drops_endpoints_but_the_log_detail_keeps_them() {
         let raw = "soda track_v2 failed: https://api.qishui.com/luna/pc/feed/song-tab?aid=386088&track_id=7: Connection Failed: tls connection init failed: unexpected end of file (seo fallback: https://beta-luna.douyin.com/luna/h5/seo-track?track_id=7: Connection Failed: tls connection init failed: unexpected end of file)";

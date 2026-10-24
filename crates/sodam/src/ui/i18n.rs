@@ -423,7 +423,6 @@ impl Language {
             "播放队列 · {} 首" => "Play Queue · {} tracks",
             "我的音乐" => "My Music",
             "会话 {}…" => "Session {}…",
-            "登录失败：{err}" => "Sign-in failed: {err}",
             "搜索中…" => "Searching…",
             "{} 条结果" => "{} results",
             "未登录：先在「登录」页扫码" => "Sign in with QR code first",

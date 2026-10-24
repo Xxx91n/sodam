@@ -351,8 +351,14 @@ pub struct Root {
     pub playback_error: Option<String>,
     /// 连续装载失败次数（>=3 就停下，避免无限跳歌）。
     ///
-    /// 清零判据是「真的播出去若干秒」，不是「装载完成」：见 `audible_again`。
+    /// 清零判据是「最近一次成功装载真的播出去若干秒」，不是「此刻有声」：
+    /// 见 `AttemptProgress::recovered` 与下面的 `progress_token`。
     pub(crate) consecutive_failures: u32,
+    /// 最近一次**成功装载**交给引擎的序号；任何一次装载失败都把它作废。
+    ///
+    /// 连败复位只认「这个序号 == 引擎当前快照的 load_seq」，也就是进展必须归属于
+    /// 最新那次尝试。没有它，上一首还在放就会把计数每拍清零，封顶永远触发不了。
+    pub(crate) progress_token: Option<u64>,
     /// 连败封顶闸门：打开后自动续播（播完切下一首、预取巡检）全部停住，
     /// 直到用户主动播放。只写 `playing = false` 拦不住——引擎仍在出声，
     /// 「已暂停」就成了谎话。
@@ -472,6 +478,7 @@ impl Root {
             play_seq: 0,
             playback_error: None,
             consecutive_failures: 0,
+            progress_token: None,
             playback_halted: false,
             playing: false,
             recommendation: None,

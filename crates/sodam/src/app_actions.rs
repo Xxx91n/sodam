@@ -6,6 +6,7 @@ use crate::ui::i18n::Language;
 use crate::ui::theme::{self, ThemeKind};
 use gpui::prelude::*;
 use gpui::{Context, Window};
+use sodam_core::audio::PlaybackSnapshot;
 use sodam_core::failure::{
     jitter_from_elapsed, PlayBudget, PlaybackFailure, RecoveryAction, Retryability, Stage,
 };
@@ -199,12 +200,13 @@ impl Root {
                 if snap.playing || root.pending_track.is_some() {
                     cx.notify();
                 }
-                // 熔断复位：装载成功不算「缓过来」，声音真的播出去若干秒才算。
-                // 之前在这里写 `consecutive_failures = 0`（装载完成），于是「能装载、
-                // 不出声」的坏文件把连败一直压在阈值下，封顶永远触发不了。
-                let errored = !snap.error.is_empty();
-                if audible_again(snap.playing, snap.position_seconds, errored) {
+                // 熔断复位：装载成功不算「缓过来」，声音真的播出去若干秒才算；
+                // 而且必须归属到最近一次成功装载——上一首还在放时清零连败，
+                // 封顶就永远触发不了（见 AttemptProgress::recovered）。
+                let progress = AttemptProgress::of(&snap, root.progress_token);
+                if progress.recovered() {
                     root.consecutive_failures = 0;
+                    root.progress_token = None;
                 }
                 // 播完自动下一首：按序号判断（循环同一首也不会漏切）。
                 // 注意：正在装载下一首（pending）时「播完」属于旧曲目，
@@ -2150,7 +2152,9 @@ impl Root {
                 }
                 match result {
                     Ok(cached) => {
-                        root.pending_engine_load = Some(root.engine.load(track.clone(), cached));
+                        let sequence = root.engine.load(track.clone(), cached);
+                        root.pending_engine_load = Some(sequence);
+                        root.progress_token = Some(sequence);
                         if std::env::var("SODAM_PLAYER_LOG").is_ok() {
                             eprintln!("[player] 装载完成：{}", track.title);
                         }
@@ -2174,6 +2178,8 @@ impl Root {
                         let context = load_failure_context(failure.stage, root.language);
                         root.log_failure(&context, &failure);
                         root.pending_track = None;
+                        // 这次尝试失败了：它之前的「播出去」不再为它抵账。
+                        root.progress_token = None;
                         let message = root.tr(play_failure_text(&failure)).to_string();
                         root.playback_error = Some(message.clone());
                         root.notify_warning_once("track-stream-failed", message);
@@ -2333,16 +2339,42 @@ const PLAY_FAILURE_HALT_AFTER: u32 = 3;
 /// 熔断复位判据：声音播到这么多秒才算「真的缓过来」。
 const PLAYBACK_RECOVER_SECONDS: f64 = 3.0;
 
-/// 这一拍算不算「真的播出去了」。
+/// 一次「播出去了没有」的判定材料。
 ///
-/// 判据刻意不是「装载完成」：文件交给引擎和听众听见是两件事。用装载成功清零连败，
-/// 「能装载、不出声」的坏文件会把计数一直压在阈值下，封顶永远触发不了——
-/// 熔断复位要的是「Closed 态恢复」那种语义，见 Circuit Breaker 模式。
-///
-/// 入参取原始值而不是 `&PlaybackSnapshot`：那个结构体有 `pub(crate)` 字段，
-/// 在本 crate 里连 `..Default::default()` 都构造不出来，判据就不该依赖它。
-fn audible_again(playing: bool, position_seconds: f64, errored: bool) -> bool {
-    playing && !errored && position_seconds >= PLAYBACK_RECOVER_SECONDS
+/// `PlaybackSnapshot` 有 `pub(crate)` 字段，本 crate 连 `..Default::default()` 都构造不出，
+/// 所以判定放在这个自有小结构上，测试可以离线直接喂数据。
+struct AttemptProgress {
+    /// 最近一次**成功装载**的引擎序号；一旦有装载失败就作废。
+    token: Option<u64>,
+    load_seq: u64,
+    playing: bool,
+    position_seconds: f64,
+    errored: bool,
+}
+
+impl AttemptProgress {
+    fn of(snap: &PlaybackSnapshot, token: Option<u64>) -> Self {
+        Self {
+            token,
+            load_seq: snap.load_seq,
+            playing: snap.playing,
+            position_seconds: snap.position_seconds,
+            errored: !snap.error.is_empty(),
+        }
+    }
+
+    /// 连败该不该清零：**最近一次成功装载**的那首真的播出去若干秒才算。
+    ///
+    /// 判据刻意不看「此刻有没有声音」：上一首还在放而后面几首装载失败时，ambient
+    /// 的播放状态会把计数一直清零，封顶就永远触发不了（真机踩过）。归属到最近一次
+    /// 尝试才是业界一致做法——gRPC 的 attempt、Media3 的 `loadTaskId`/`EventTime`、
+    /// mpv 挂在 playlist entry 上的 `init_failed` 都是这个形状。
+    fn recovered(self) -> bool {
+        self.token == Some(self.load_seq)
+            && self.playing
+            && !self.errored
+            && self.position_seconds >= PLAYBACK_RECOVER_SECONDS
+    }
 }
 
 /// 预取数量：环境变量 `SODAM_PREFETCH_COUNT`（默认 3，解析失败/为 0 用默认）。
@@ -2489,13 +2521,39 @@ mod playback_budget_tests {
     use super::*;
     use crate::ui::i18n::Language;
 
-    /// 复位判据是「播出去了」，不是「装载完成了」。
+    fn progress(token: Option<u64>, seq: u64, playing: bool, at: f64) -> AttemptProgress {
+        AttemptProgress {
+            token,
+            load_seq: seq,
+            playing,
+            position_seconds: at,
+            errored: false,
+        }
+    }
+
+    /// 复位必须归属到**最近一次成功装载**：上一首还在放不算缓过来。
     #[test]
-    fn streak_resets_only_on_audible_progress() {
-        assert!(audible_again(true, PLAYBACK_RECOVER_SECONDS, false));
-        assert!(!audible_again(true, PLAYBACK_RECOVER_SECONDS - 0.1, false));
-        assert!(!audible_again(false, 90.0, false), "暂停中不该复位");
-        assert!(!audible_again(true, 90.0, true), "带错误不该复位");
+    fn streak_resets_only_for_the_latest_attempt() {
+        let fresh = progress(Some(7), 7, true, PLAYBACK_RECOVER_SECONDS).recovered();
+        assert!(fresh, "最新一次尝试播满了就该复位");
+        // 装载失败把 token 作废之后，旧曲继续播放不该抵账
+        let stale = progress(None, 5, true, 90.0).recovered();
+        assert!(!stale, "上一首还在放不该抵账");
+        // 引擎已经翻到别的装载序号
+        let newer = progress(Some(6), 7, true, 90.0).recovered();
+        assert!(!newer, "进展属于别的尝试");
+    }
+
+    /// 归属对了，还要真的播出去若干秒、且没报错。
+    #[test]
+    fn streak_needs_audible_progress() {
+        let early = progress(Some(3), 3, true, PLAYBACK_RECOVER_SECONDS - 0.1).recovered();
+        assert!(!early, "刚交给引擎不该清零");
+        let paused = progress(Some(3), 3, false, 90.0).recovered();
+        assert!(!paused, "暂停中不该复位");
+        let mut broken = progress(Some(3), 3, true, 90.0);
+        broken.errored = true;
+        assert!(!broken.recovered(), "带错误不该复位");
     }
 
     /// 封顶的数字改动必须连带那句用户看到的文案。

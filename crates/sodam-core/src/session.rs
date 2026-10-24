@@ -52,6 +52,26 @@ pub struct AccountInfo {
     pub avatar_url: String,
 }
 
+/// 解析 sidecar `{档位}\t{字节}\t{0|1}`，与实际字节数核对后给出（档位，是否试听）。
+///
+/// 只认「非空文件」会让被截断的半截下载永久冒充有效缓存，表现为每次都从中间开始，
+/// 所以尺寸不符或档位为空一律 miss，重下自愈。
+/// 第三个字段是新加的：缺它说明是旧缓存，旧格式的试听标记拼在档位里（`无损 · 试听`），
+/// 这里把它读出来、顺手洗回纯档位——已经下好的整曲不该因为多一个字段就被重下。
+fn read_sidecar(text: &str, actual: u64) -> Option<(String, bool)> {
+    let mut fields = text.split('\t');
+    let quality = fields.next()?.trim().to_string();
+    let size = fields.next()?.trim().parse::<u64>().ok()?;
+    if size != actual || quality.is_empty() {
+        return None;
+    }
+    let (quality, preview) = match fields.next() {
+        Some(flag) => (quality, flag.trim() == "1"),
+        None => (quality.replace(" · 试听", ""), quality.contains("试听")),
+    };
+    Some((quality, preview))
+}
+
 impl Session {
     /// 当前音质偏好对应的缓存标签（`auto` 表示未指定）。
     fn quality_tag(&self) -> String {
@@ -76,18 +96,7 @@ impl Session {
         let quality_path =
             crate::audio::cache_dir().join(format!("{track_id}-{}.quality", self.quality_tag()));
         let text = std::fs::read_to_string(&quality_path).ok()?;
-        let mut fields = text.split('\t');
-        let quality = fields.next()?.trim().to_string();
-        let size = fields.next()?.trim().parse::<u64>().ok()?;
-        if size != actual || quality.is_empty() {
-            return None;
-        }
-        // 第三个字段是这一版加的。缺它说明是旧缓存：旧格式的试听标记拼在标签里，
-        // 这里读出来、顺手把标签洗回纯档位——已经下好的整曲不该因为多一个字段就被重下。
-        let (quality, preview) = match fields.next() {
-            Some(flag) => (quality, flag.trim() == "1"),
-            None => (quality.replace(" · 试听", ""), quality.contains("试听")),
-        };
+        let (quality, preview) = read_sidecar(&text, actual)?;
         Some((path, quality, preview))
     }
 
@@ -327,7 +336,7 @@ impl Session {
     /// 失败返回 [`PlaybackFailure`]（阶段 + 可否重试 + 修复动作），不再压成一句
     /// 「下载失败」：一次播放请求串着地址解析、签名、音频体传输、解密落盘四类失败，
     /// 把它们混在一起既误导归因，也让永久错误白烧重试次数。
-    /// S1 的相位上限见 `docs/adr/0001`——`download_with_info` 内部同时做了前三件事，
+    /// 相位归因有上限：`download_with_info` 内部同时做了前三件事，
     /// 所以那一段的失败只能靠 `classify` 从 `SodaError` 的形态尽量还原。
     pub fn download_to_cache(
         &self,
@@ -632,6 +641,32 @@ mod tests {
         let session = Session::new(settings);
         assert!(session.has_cookie());
         assert_eq!(session.settings().quality, "lossless");
+    }
+
+    /// 试听标记与旧 sidecar 的兼容：这条链一断，界面就会把整曲说成试听（或反之）。
+    #[test]
+    fn sidecar_reads_preview_flag_and_self_heals_legacy_label() {
+        let (quality, preview) = read_sidecar("无损 871k\t2048\t1", 2048).unwrap();
+        assert_eq!(quality, "无损 871k");
+        assert!(preview);
+        let (_, preview) = read_sidecar("无损 871k\t2048\t0", 2048).unwrap();
+        assert!(!preview);
+        // 旧缓存没有第三个字段：试听拼在档位里，要读出来并洗回纯档位
+        let (quality, preview) = read_sidecar("无损 · 试听\t2048", 2048).unwrap();
+        assert_eq!(quality, "无损");
+        assert!(preview);
+        let (quality, preview) = read_sidecar("无损\t2048", 2048).unwrap();
+        assert_eq!(quality, "无损");
+        assert!(!preview);
+    }
+
+    /// 尺寸对不上、档位为空、字段不齐一律 miss——半截文件不许冒充命中。
+    #[test]
+    fn sidecar_rejects_mismatched_or_empty_records() {
+        assert!(read_sidecar("无损 871k\t2047\t0", 2048).is_none());
+        assert!(read_sidecar("\t2048\t0", 2048).is_none());
+        assert!(read_sidecar("无损 871k\tabc\t0", 2048).is_none());
+        assert!(read_sidecar("无损 871k", 2048).is_none());
     }
 
     #[test]

@@ -242,6 +242,8 @@ fn progress_bar(
 }
 
 /// 引擎里的音质标签由核心层生成；这里按当前语言显示。
+/// 档位名翻译。试听标注不在这里——它由 `PlaybackSnapshot::preview` 驱动，
+/// 见 [`render`] 里那句 `quality.push_str(...)`。
 fn localized_quality(raw: String, language: crate::ui::i18n::Language) -> String {
     if language.resolved().is_zh() {
         return raw;
@@ -251,7 +253,6 @@ fn localized_quality(raw: String, language: crate::ui::i18n::Language) -> String
         .replace("较高", "Medium")
         .replace("标准", "Standard")
         .replace("未知", "Unknown")
-        .replace(" · 试听", " · Preview")
 }
 
 /// 渲染播放条。
@@ -274,19 +275,24 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> impl IntoElement {
         .map(|track| track.artist.clone())
         .unwrap_or_else(|| language.text("选择一首歌开始播放吧").to_string());
     let detail = artist.clone();
-    // 引擎错误（解码/设备）与「拉流失败」都显示在这一行
-    let error = if snapshot.error == "音频输出长时间无响应，请重试播放" {
-        root.tr("音频输出长时间无响应，请重试播放").to_string()
-    } else if snapshot.error == "音频线程已退出，请重启应用" {
-        root.tr("音频线程已退出，请重启应用").to_string()
-    } else if !snapshot.error.is_empty() {
-        snapshot.error.clone()
+    // 引擎错误（解码/设备）与一次播放尝试的失败都显示在这一行。
+    // 一律过词典：引擎给的是运行时 String，`==` 梯子只覆盖写死的那两条，其余原样
+    // 上屏——英文界面就会露出中文。查不到的（已经翻过的）原样返回。
+    let error = if !snapshot.error.is_empty() {
+        language.engine_error(&snapshot.error)
     } else {
-        root.playback_error.clone().unwrap_or_default()
+        match root.playback_error.as_deref() {
+            Some(text) => language.engine_error(text),
+            None => String::new(),
+        }
     };
     let progress = snapshot.progress_fraction();
-    // 实际拉到的流音质（不是设置里的偏好档位）
-    let quality = localized_quality(snapshot.quality.clone(), language);
+    // 实际拉到的流音质（不是设置里的偏好档位）；是不是试听片段由布尔决定标注，
+    // 不再从标签字符串里 `contains("试听")` —— 那样显示与状态就同一个事实两处真相。
+    let mut quality = localized_quality(snapshot.quality.clone(), language);
+    if snapshot.preview {
+        quality.push_str(&format!(" · {}", root.tr("试听")));
+    }
     let title_link_track = track.as_ref().cloned();
     let artist_link_track = track.as_ref().cloned();
     let volume = root.settings.volume;

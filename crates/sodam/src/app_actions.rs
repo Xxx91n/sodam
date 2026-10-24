@@ -2,6 +2,7 @@
 //!
 //! [`Root`] 的字段定义在 [`super`]，这里按领域拆分实现，避免单文件继续膨胀。
 
+use crate::ui::i18n::Language;
 use crate::ui::theme::{self, ThemeKind};
 use gpui::prelude::*;
 use gpui::{Context, Window};
@@ -186,7 +187,7 @@ impl Root {
                 {
                     root.playing = false;
                     root.playback_error = Some(snap.error.clone());
-                    let message = snap.error.clone();
+                    let message = root.language.engine_error(&snap.error);
                     root.notify_error_once("playback-engine-failed", message);
                     cx.notify();
                 }
@@ -535,7 +536,12 @@ impl Root {
                             .text("已打开二次验证窗口，请在其中完成验证")
                             .to_string(),
                         Err(err) => {
-                            eprintln!("[failure] 打开二次验证窗口失败: {err}");
+                            // 这里没有 `root` 可借，但脱敏不能因此跳过：这条错误
+                            // 可能内嵌带签名 token 的地址，日志同样不许留下它。
+                            eprintln!(
+                                "[failure] 打开二次验证窗口失败: {}",
+                                sodam_core::failure::redact_url_secrets(&err.to_string())
+                            );
                             language
                                 .text("打开验证窗口失败，请改用官方客户端导出 Cookie。")
                                 .to_string()
@@ -1061,7 +1067,8 @@ impl Root {
                 root.playing = false;
                 root.progress_preview = None;
                 if let Err(err) = result {
-                    root.log_failure(&format!("播放装载失败（{}）", stage_label(err.stage)), &err);
+                    let context = load_failure_context(err.stage, root.language);
+                    root.log_failure(&context, &err);
                     root.playback_error = Some(root.tr(play_failure_text(&err)).to_string());
                     root.playing = false;
                 }
@@ -2164,10 +2171,8 @@ impl Root {
                     Err(failure) => {
                         // 技术原文只进日志漏斗（阶段 + 已切断查询串的原始错误）；
                         // 界面上只留下面那一句人话。
-                        root.log_failure(
-                            &format!("播放装载失败（{}）", stage_label(failure.stage)),
-                            &failure,
-                        );
+                        let context = load_failure_context(failure.stage, root.language);
+                        root.log_failure(&context, &failure);
                         root.pending_track = None;
                         let message = root.tr(play_failure_text(&failure)).to_string();
                         root.playback_error = Some(message.clone());
@@ -2272,7 +2277,7 @@ const PREFETCH_RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_s
 /// 阶段名的中文原文（稳定 i18n key）。
 ///
 /// 「地址解析（含签名）」不是笔误：上游把这两步的失败压成了同一个无相位错误，
-/// S1 分不开就明说分不开，别假装报出了四个独立阶段。
+/// 现在分不开就明说分不开，别假装报出了四个独立阶段。
 fn stage_label(stage: Stage) -> &'static str {
     match stage {
         Stage::ResolveStream => "地址解析（含签名）",
@@ -2281,6 +2286,12 @@ fn stage_label(stage: Stage) -> &'static str {
         Stage::Input => "参数",
         Stage::Network => "网络传输",
     }
+}
+
+/// 日志里的装载失败上下文。阶段名也走词典：界面是什么语言，日志就是什么语言，
+/// 不必让用户（或替用户看日志的人）在英文界面里读中文阶段名。
+fn load_failure_context(stage: Stage, language: Language) -> String {
+    format!("播放装载失败（{}）", language.text(stage_label(stage)))
 }
 
 /// 一次播放尝试失败后给人看的那一句（中文原文即稳定 i18n key）。

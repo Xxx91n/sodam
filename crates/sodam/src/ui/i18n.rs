@@ -496,6 +496,49 @@ impl Language {
             _ => key,
         }
     }
+
+    /// 引擎错误文案的查表入口。
+    ///
+    /// 单独一张表是因为形状不同：`PlaybackSnapshot::error` 是运行时 `String`，而
+    /// [`Self::text`] 的键是编译期 `&'static str`；放宽 `text` 的签名会连带
+    /// `status_label` 等一批函数的返回类型，属于别人家的代码，不在本改动里。
+    /// 表里的键必须与 `sodam-core/src/audio.rs` 写进快照的说法逐字一致。
+    pub fn engine_error(self, message: &str) -> String {
+        if self.resolved().is_zh() {
+            return message.to_string();
+        }
+        let english = match message {
+            "音频播放没能启动，请重启应用。" => {
+                "Audio playback couldn't start. Restart the app."
+            }
+            "音频线程已退出，请重启应用" => {
+                "The audio worker stopped. Please restart the app."
+            }
+            "音频输出中断了。" => "Audio output stopped.",
+            "找不到可用的音频设备。" => "No audio device is available.",
+            "音频设备不可用，请重新播放。" => {
+                "The audio device is unavailable. Press play to try again."
+            }
+            "音频输出长时间无响应，请重试播放" => {
+                "Audio output stopped responding. Try playing again."
+            }
+            "切换音频设备后没能继续播放。" => {
+                "Playback didn't resume after switching the audio device."
+            }
+            "这首歌的文件读不出来，请重新播放。" => {
+                "This song's file can't be read. Press play to try again."
+            }
+            "当前曲目没有可重新打开的缓存" => {
+                "The current track has no cached file to reopen"
+            }
+            "音频源不支持后退/跳转" => {
+                "This track can't seek backward or jump to a position"
+            }
+            "还没有可播放的曲目" => "Nothing to play yet",
+            _ => message,
+        };
+        english.to_string()
+    }
 }
 
 impl Language {

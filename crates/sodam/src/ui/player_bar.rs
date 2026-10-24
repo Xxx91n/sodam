@@ -275,15 +275,16 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> impl IntoElement {
         .map(|track| track.artist.clone())
         .unwrap_or_else(|| language.text("选择一首歌开始播放吧").to_string());
     let detail = artist.clone();
-    // 引擎错误（解码/设备）与一次播放尝试的失败都显示在这一行
-    let error = if snapshot.error == "音频输出长时间无响应，请重试播放" {
-        root.tr("音频输出长时间无响应，请重试播放").to_string()
-    } else if snapshot.error == "音频线程已退出，请重启应用" {
-        root.tr("音频线程已退出，请重启应用").to_string()
-    } else if !snapshot.error.is_empty() {
-        snapshot.error.clone()
+    // 引擎错误（解码/设备）与一次播放尝试的失败都显示在这一行。
+    // 一律过词典：引擎给的是运行时 String，`==` 梯子只覆盖写死的那两条，其余原样
+    // 上屏——英文界面就会露出中文。查不到的（已经翻过的）原样返回。
+    let error = if !snapshot.error.is_empty() {
+        language.engine_error(&snapshot.error)
     } else {
-        root.playback_error.clone().unwrap_or_default()
+        match root.playback_error.as_deref() {
+            Some(text) => language.engine_error(text),
+            None => String::new(),
+        }
     };
     let progress = snapshot.progress_fraction();
     // 实际拉到的流音质（不是设置里的偏好档位）；是不是试听片段由布尔决定标注，

@@ -2,9 +2,14 @@
 //!
 //! [`Root`] 的字段定义在 [`super`]，这里按领域拆分实现，避免单文件继续膨胀。
 
+use crate::ui::i18n::Language;
 use crate::ui::theme::{self, ThemeKind};
 use gpui::prelude::*;
 use gpui::{Context, Window};
+use sodam_core::audio::PlaybackSnapshot;
+use sodam_core::failure::{
+    jitter_from_elapsed, PlayBudget, PlaybackFailure, RecoveryAction, Retryability, Stage,
+};
 use sodam_core::library::RecommendationSource;
 use sodam_core::models::{PlaylistItem, SceneItem, TrackItem};
 use sodam_core::session::Session;
@@ -13,7 +18,9 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{status_label, LoginState, Nav, QueueOrigin, Root, ROW_BATCH};
+use super::{
+    status_label, LoginState, Nav, QueueOrigin, Root, REMOTE_TEXT, RETRY_TEXT, ROW_BATCH, SAVE_TEXT,
+};
 use sodam_core::queue::Queue;
 
 impl Root {
@@ -96,12 +103,17 @@ impl Root {
             {
                 continue;
             }
-            // 近期失败过的曲目进入冷却：巡检不能把永久失败的歌（下架/受限）
-            // 每 5 秒无限重试——那会持续打签名服务和网络
+            // 失败过的曲目按分类处置：
+            // * 永久失败（下架 / 无权益 / 签名服务鉴权）——**不再自动排队**。巡检每 5 秒
+            //   重排一次就是在持续打扰那台共享签名服务，而这正是预取路径最容易犯的错；
+            // * 瞬时 / 限流——进冷却，期满再试。
             if self
                 .prefetch_failed
                 .get(&next.id)
-                .is_some_and(|failed_at| failed_at.elapsed() < PREFETCH_RETRY_COOLDOWN)
+                .is_some_and(|(failed_at, retryability)| match retryability {
+                    Retryability::Never => true,
+                    _ => failed_at.elapsed() < PREFETCH_RETRY_COOLDOWN,
+                })
             {
                 continue;
             }
@@ -117,24 +129,33 @@ impl Root {
             });
             cx.spawn(async move |this, cx| {
                 let outcome = result.await;
-                let succeeded = outcome.is_ok();
                 if log {
                     match &outcome {
                         Ok(cached) => {
                             eprintln!("[prefetch] {} → {}", track.title, cached.quality)
                         }
-                        Err(err) => eprintln!("[prefetch] {} 失败: {err}", track.title),
+                        Err(failure) => eprintln!("[prefetch] {} 失败: {failure}", track.title),
                     }
                 }
                 let _ = this.update(cx, |root, _cx| {
                     // 只删自己的：避免早先的完成回执误清后来排的曲目（单槽时代踩过）
                     root.prefetch_inflight.remove(&track.id);
-                    // 成功清冷却；失败记时刻，冷却期内巡检不再重排
-                    if succeeded {
-                        root.prefetch_failed.remove(&track.id);
-                    } else {
-                        root.prefetch_failed
-                            .insert(track.id.clone(), std::time::Instant::now());
+                    match &outcome {
+                        Ok(_) => {
+                            root.prefetch_failed.remove(&track.id);
+                        }
+                        Err(failure) => {
+                            // 只做内存封顶：清掉冷却类，永久类留着当「别再自动排队」。
+                            if root.prefetch_failed.len() > 256 {
+                                root.prefetch_failed.retain(|_, (_, retryability)| {
+                                    *retryability == Retryability::Never
+                                });
+                            }
+                            root.prefetch_failed.insert(
+                                track.id.clone(),
+                                (std::time::Instant::now(), failure.retryability),
+                            );
+                        }
                     }
                 });
             })
@@ -167,17 +188,25 @@ impl Root {
                 {
                     root.playing = false;
                     root.playback_error = Some(snap.error.clone());
-                    let message = snap.error.clone();
+                    let message = root.language.engine_error(&snap.error);
                     root.notify_error_once("playback-engine-failed", message);
                     cx.notify();
                 }
                 if let Some(error) = root.preferences_writer.take_error() {
-                    let message = root.localized("保存播放设置失败：{err}", &[error]);
+                    let message = root.failure_text("保存播放设置失败", &error, SAVE_TEXT);
                     root.notify_error_once("preferences-save-failed", message);
                     cx.notify();
                 }
                 if snap.playing || root.pending_track.is_some() {
                     cx.notify();
+                }
+                // 熔断复位：装载成功不算「缓过来」，声音真的播出去若干秒才算；
+                // 而且必须归属到最近一次成功装载——上一首还在放时清零连败，
+                // 封顶就永远触发不了（见 AttemptProgress::recovered）。
+                let progress = AttemptProgress::of(&snap, root.progress_token);
+                if progress.recovered() {
+                    root.consecutive_failures = 0;
+                    root.progress_token = None;
                 }
                 // 播完自动下一首：按序号判断（循环同一首也不会漏切）。
                 // 注意：正在装载下一首（pending）时「播完」属于旧曲目，
@@ -190,15 +219,20 @@ impl Root {
                     &mut root.last_finished_seq,
                     &mut root.last_seek_seq,
                 );
-                if snap.finished && current && root.pending_track.is_none() {
+                // 封顶闸门打开时不推进：连续几首都没播出来还往后翻，就是在替用户决定
+                // 「再试几首」，而网络恢复该由用户按下播放来确认。
+                let should_advance = current && !root.playback_halted;
+                if snap.finished && should_advance && root.pending_track.is_none() {
                     root.next_track(cx);
                 }
                 // 预取巡检：每 25 拍（约 5s）补一次，覆盖 append/remove 等
                 // 队列变更路径（spawn_prefetch 自身会去重，空转开销极小）
                 root.prefetch_patrol = root.prefetch_patrol.wrapping_add(1);
-                if root.prefetch_patrol % 25 == 0 {
-                    root.prefetch_failed
-                        .retain(|_, failed| failed.elapsed() < PREFETCH_RETRY_COOLDOWN);
+                if root.prefetch_patrol % 25 == 0 && !root.playback_halted {
+                    root.prefetch_failed.retain(|_, (failed_at, retryability)| {
+                        *retryability == Retryability::Never
+                            || failed_at.elapsed() < PREFETCH_RETRY_COOLDOWN
+                    });
                     root.spawn_prefetch(cx);
                 }
                 if root.prefetch_patrol % 300 == 0 {
@@ -249,7 +283,7 @@ impl Root {
         let value = if quality == "auto" { "" } else { quality };
         self.settings.quality = value.to_string();
         if let Err(err) = self.settings.save() {
-            let message = self.localized("保存音质设置失败：{err}", &[err.to_string()]);
+            let message = self.failure_text("保存音质设置失败", &err, SAVE_TEXT);
             self.notify_error_once("quality-save-failed", message);
         }
         if let Some(session) = self.session.as_mut() {
@@ -377,9 +411,11 @@ impl Root {
                 Ok(created) => created,
                 Err(err) => {
                     let _ = this.update(cx, |root, cx| {
-                        root.login = LoginState::Failed(
-                            root.localized("创建二维码失败：{err}", &[err.to_string()]),
-                        );
+                        root.login = LoginState::Failed(root.failure_text(
+                            "创建二维码失败",
+                            &err,
+                            REMOTE_TEXT,
+                        ));
                         let status = language
                             .text("创建二维码失败，可点「重新获取二维码」重试")
                             .to_string();
@@ -393,9 +429,11 @@ impl Root {
                 Ok(matrix) => matrix,
                 Err(err) => {
                     let _ = this.update(cx, |root, cx| {
-                        root.login = LoginState::Failed(
-                            root.localized("二维码编码失败：{err}", &[err.to_string()]),
-                        );
+                        root.login = LoginState::Failed(root.failure_text(
+                            "二维码编码失败",
+                            &err,
+                            RETRY_TEXT,
+                        ));
                         cx.notify();
                     });
                     return;
@@ -430,9 +468,11 @@ impl Root {
                     Err(err) => {
                         // 单次失败（限流 / 网络抖动）不该结束整个登录流程，继续等下一轮
                         let _ = this.update(cx, |root, cx| {
+                            // 先记原文、先取文案：下面要对 root.login 取可变借用。
+                            root.log_failure("登录轮询异常", &err);
+                            let status_text = root.tr(RETRY_TEXT).to_string();
                             if let LoginState::Waiting { status, .. } = &mut root.login {
-                                *status = language
-                                    .textf("轮询异常（会自动重试）：{err}", &[err.to_string()]);
+                                *status = status_text;
                             }
                             cx.notify();
                         });
@@ -457,8 +497,8 @@ impl Root {
                                     );
                                 }
                                 Err(err) => {
-                                    let message = root
-                                        .localized("登录成功但保存失败：{err}", &[err.to_string()]);
+                                    let message =
+                                        root.failure_text("登录成功但保存失败", &err, SAVE_TEXT);
                                     root.notify_error_once("login-save-failed", message);
                                 }
                             },
@@ -497,10 +537,17 @@ impl Root {
                         Ok(_) => language
                             .text("已打开二次验证窗口，请在其中完成验证")
                             .to_string(),
-                        Err(err) => language.textf(
-                            "打开二次验证窗口失败：{err}，请改用官方客户端导出 Cookie",
-                            &[err.to_string()],
-                        ),
+                        Err(err) => {
+                            // 这里没有 `root` 可借，但脱敏不能因此跳过：这条错误
+                            // 可能内嵌带签名 token 的地址，日志同样不许留下它。
+                            eprintln!(
+                                "[failure] 打开二次验证窗口失败: {}",
+                                sodam_core::failure::redact_url_secrets(&err.to_string())
+                            );
+                            language
+                                .text("打开验证窗口失败，请改用官方客户端导出 Cookie。")
+                                .to_string()
+                        }
                     };
                     let _ = this.update(cx, |root, cx| {
                         root.set_status_text(message);
@@ -581,15 +628,15 @@ impl Root {
                                 }
                                 Ok(None) => {}
                                 Err(err) => {
-                                    let message = root
-                                        .localized("音质偏好保存失败：{err}", &[err.to_string()]);
+                                    let message =
+                                        root.failure_text("音质偏好保存失败", &err, SAVE_TEXT);
                                     root.notify_error_once("quality-save-failed", message);
                                 }
                             }
                         }
                     }
                     Err(err) => {
-                        let message = root.localized("读取账号信息失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("读取账号信息失败", &err, REMOTE_TEXT);
                         root.notify_error_once("account-load-failed", message);
                     }
                 }
@@ -621,7 +668,7 @@ impl Root {
             Err(err) => {
                 self.notify_error_once(
                     "theme-save-failed",
-                    self.localized("主题已切换，但保存失败：{err}", &[err.to_string()]),
+                    self.failure_text("主题已切换，但保存失败", &err, SAVE_TEXT),
                 );
             }
         }
@@ -640,7 +687,7 @@ impl Root {
             Err(err) => {
                 self.notify_error_once(
                     "theme-save-failed",
-                    self.localized("已切换为跟随系统，但保存失败：{err}", &[err.to_string()]),
+                    self.failure_text("已切换为跟随系统，但保存失败", &err, SAVE_TEXT),
                 );
             }
         }
@@ -754,7 +801,8 @@ impl Root {
                     Err(err) => {
                         root.lyrics = Arc::new(Vec::new());
                         root.lyrics_active = None;
-                        root.lyrics_error = Some(err.to_string());
+                        root.log_failure("读取歌词失败", &err);
+                        root.lyrics_error = Some(root.tr(REMOTE_TEXT).to_string());
                     }
                 }
                 cx.notify();
@@ -918,7 +966,8 @@ impl Root {
                         root.sync_scenes_list();
                         root.ensure_covers(&covers, cx);
                         if let Some(err) = mode_error.or(card_error) {
-                            let message = root.localized("读取听歌模式失败：{err}", &[err]);
+                            let message =
+                                root.failure_text("读取听歌模式失败", &err, REMOTE_TEXT);
                             root.notify_warning_once("scenes-load-failed", message);
                         } else if added == 0 {
                             root.set_status_text(root.tr("没有更多探索歌单"));
@@ -930,7 +979,7 @@ impl Root {
                     }
                     Err(err) => {
                         let message =
-                            root.localized("读取听歌模式失败：{err}", &[err.to_string()]);
+                            root.failure_text("读取听歌模式失败", &err, REMOTE_TEXT);
                         root.notify_error_once("scenes-load-failed", message);
                     }
                 }
@@ -982,8 +1031,7 @@ impl Root {
                         );
                     }
                     Err(err) => {
-                        let message =
-                            root.localized("加载听歌模式队列失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("加载听歌模式队列失败", &err, REMOTE_TEXT);
                         root.notify_error_once("scene-queue-load-failed", message);
                     }
                 }
@@ -1021,7 +1069,9 @@ impl Root {
                 root.playing = false;
                 root.progress_preview = None;
                 if let Err(err) = result {
-                    root.playback_error = Some(err.to_string());
+                    let context = load_failure_context(err.stage, root.language);
+                    root.log_failure(&context, &err);
+                    root.playback_error = Some(root.tr(play_failure_text(&err)).to_string());
                     root.playing = false;
                 }
                 cx.notify();
@@ -1144,7 +1194,7 @@ impl Root {
                         );
                     }
                     Err(err) => {
-                        let message = root.localized("加载推荐队列失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("加载推荐队列失败", &err, REMOTE_TEXT);
                         root.notify_error_once("recommendation-load-failed", message);
                     }
                 }
@@ -1217,8 +1267,7 @@ impl Root {
                                 root.notify_warning_once("radio-empty", message);
                             }
                             Err(err) => {
-                                let message =
-                                    root.localized("加载电台失败：{err}", &[err.to_string()]);
+                                let message = root.failure_text("加载电台失败", &err, REMOTE_TEXT);
                                 root.notify_error_once("radio-load-failed", message);
                             }
                         }
@@ -1278,7 +1327,7 @@ impl Root {
                         std::slice::from_ref(&playlist.title),
                     ),
                     Err(err) => {
-                        let message = root.localized("加载歌单失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("加载歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("playlist-load-failed", message);
                     }
                 }
@@ -1337,7 +1386,7 @@ impl Root {
                         root.set_status("推荐队列已追加 {} 首", &[added.to_string()]);
                     }
                     Err(err) => {
-                        let message = root.localized("加载更多推荐失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("加载更多推荐失败", &err, REMOTE_TEXT);
                         root.notify_warning_once("recommendation-more-failed", message);
                     }
                 }
@@ -1389,7 +1438,7 @@ impl Root {
             Err(err) => {
                 self.notify_error_once(
                     "logout-save-failed",
-                    self.localized("已退出，但保存配置失败：{err}", &[err.to_string()]),
+                    self.failure_text("已退出，但保存配置失败", &err, SAVE_TEXT),
                 );
             }
         }
@@ -1592,7 +1641,7 @@ impl Root {
                         root.ensure_covers(&covers, cx);
                     }
                     Err(err) => {
-                        let message = root.localized("读取歌单失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("读取歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("library-load-failed", message);
                     }
                 }
@@ -1710,7 +1759,7 @@ impl Root {
                         }
                         root.liked = Arc::new(list);
                     }
-                    let message = root.localized("收藏失败：{err}", &[err.to_string()]);
+                    let message = root.failure_text("收藏失败", &err, REMOTE_TEXT);
                     root.notify_error_once("like-toggle-failed", message);
                     cx.notify();
                 }
@@ -1762,7 +1811,7 @@ impl Root {
                         root.ensure_covers(&head, cx);
                     }
                     Err(err) => {
-                        let message = root.localized("读取收藏失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("读取收藏失败", &err, REMOTE_TEXT);
                         root.notify_error_once("liked-load-failed", message);
                     }
                 }
@@ -1872,7 +1921,7 @@ impl Root {
                     }
                     Err(err) => {
                         root.search_playlist = None;
-                        let message = root.localized("读取搜索歌单失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("读取搜索歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("search-playlist-load-failed", message);
                     }
                 }
@@ -1965,7 +2014,7 @@ impl Root {
                         root.library_detail_list.reset(final_count + 1);
                     }
                     Err(err) => {
-                        let message = root.localized("读取歌单失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("读取歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("playlist-detail-load-failed", message);
                         root.open_playlist = None;
                     }
@@ -1976,10 +2025,32 @@ impl Root {
         .detach();
     }
 
+    /// 连败封顶落闸：把声音真的停下。
+    ///
+    /// 只写 `playing = false` 拦不住任何事——引擎照旧出声，播完照旧翻下一首，
+    /// 于是「连续 3 首没播出来，已暂停」成了谎话（真机踩到）。
+    pub(crate) fn halt_playback(&mut self) {
+        self.playback_halted = true;
+        self.playing = false;
+        self.engine.pause();
+    }
+
+    /// 用户明确要求继续播放：熔断回到半开，连败重新数。
+    ///
+    /// 只在「本来落着闸」时复位，自动跳歌那条路（还没到封顶阈值）不会路过这里，
+    /// 否则每跳一首都把连败清零，封顶永远够不着。
+    pub(crate) fn release_playback_halt(&mut self) {
+        if self.playback_halted {
+            self.playback_halted = false;
+            self.consecutive_failures = 0;
+        }
+    }
+
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
         if self.pending_track.is_some() {
             return;
         }
+        self.release_playback_halt();
         let snapshot = self.engine.snapshot();
         if snapshot.track_id.is_empty()
             || !snapshot.error.is_empty()
@@ -2020,6 +2091,9 @@ impl Root {
         if std::env::var("SODAM_PLAYER_LOG").is_ok() {
             eprintln!("[player] 开始装载：{}（id={}）", track.title, track.id);
         }
+        // 走到这里就是一次被明确要求（或被允许）的播放尝试：闸门若开着，说明是用户
+        // 按了播放/切歌，熔断回半开。自动续播路径在巡检处已被闸门拦住。
+        self.release_playback_halt();
         self.playing = true;
         self.play_seq = self.play_seq.wrapping_add(1);
         let request_seq = self.play_seq;
@@ -2035,27 +2109,33 @@ impl Root {
 
         let settings = self.settings.clone();
         let work_track = track.clone();
-        // 拉流失败重试 2 次（共 3 次），退避逐渐拉长
+        // 单层预算：还要不要再来一次由**这次失败的分类**决定。
+        // 之前是无条件 3 次线性退避，于是「这首已下架」「签名服务要求鉴权」这类
+        // 永远不会因为重试变好的失败也要打满三次——既拖慢恢复，又白踩共享服务。
+        // 单次尝试内部的「卡住」由 libresoda 的空闲读超时（20s）负责；这里刻意不设
+        // 总墙钟上限，否则等于把刚拆掉的「整首下载总时限」从另一侧装回来。
         let work = cx.background_spawn(async move {
             let session = Session::new(settings);
-            let mut last_err = None;
-            for attempt in 1..=3 {
+            let budget = PlayBudget::default();
+            let started = std::time::Instant::now();
+            let log = std::env::var("SODAM_PLAYER_LOG").is_ok();
+            let mut attempt = 0u8;
+            loop {
+                attempt += 1;
                 match session.download_to_cache(&work_track) {
                     Ok(cached) => return Ok(cached),
-                    Err(err) => {
-                        if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-                            eprintln!("[player] 第 {attempt} 次拉流失败：{err}");
+                    Err(failure) => {
+                        if log {
+                            eprintln!("[player] 第 {attempt} 次装载失败：{failure}");
                         }
-                        last_err = Some(err);
-                        if attempt < 3 {
-                            std::thread::sleep(std::time::Duration::from_millis(
-                                800 * attempt as u64,
-                            ));
+                        let jitter = jitter_from_elapsed(started.elapsed());
+                        match budget.next_delay(attempt, &failure, jitter) {
+                            Some(delay) => std::thread::sleep(delay),
+                            None => return Err(failure),
                         }
                     }
                 }
             }
-            Err(last_err.unwrap_or_else(|| anyhow::anyhow!("拉流失败")))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -2072,11 +2152,12 @@ impl Root {
                 }
                 match result {
                     Ok(cached) => {
-                        root.pending_engine_load = Some(root.engine.load(track.clone(), cached));
+                        let sequence = root.engine.load(track.clone(), cached);
+                        root.pending_engine_load = Some(sequence);
+                        root.progress_token = Some(sequence);
                         if std::env::var("SODAM_PLAYER_LOG").is_ok() {
                             eprintln!("[player] 装载完成：{}", track.title);
                         }
-                        root.consecutive_failures = 0;
                         root.playback_error = None;
                         // 记录真实播放历史（去重最近一条，避免重复刷屏）
                         if root.played_history.last().map(String::as_str) != Some(track.id.as_str())
@@ -2091,28 +2172,35 @@ impl Root {
                         // 开播后立刻预取下一首，切歌时基本是秒开
                         root.spawn_prefetch(cx);
                     }
-                    Err(err) => {
-                        if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-                            eprintln!("[player] 装载失败：{} → {err}", track.title);
-                        }
+                    Err(failure) => {
+                        // 技术原文只进日志漏斗（阶段 + 已切断查询串的原始错误）；
+                        // 界面上只留下面那一句人话。
+                        let context = load_failure_context(failure.stage, root.language);
+                        root.log_failure(&context, &failure);
                         root.pending_track = None;
-                        root.consecutive_failures += 1;
-                        let message = root.localized(
-                            "「{}」拉流失败：{err}",
-                            &[track.title.to_string(), err.to_string()],
-                        );
+                        // 这次尝试失败了：它之前的「播出去」不再为它抵账。
+                        root.progress_token = None;
+                        let message = root.tr(play_failure_text(&failure)).to_string();
                         root.playback_error = Some(message.clone());
                         root.notify_warning_once("track-stream-failed", message);
-                        if root.consecutive_failures >= 3 {
-                            root.playing = false;
-                            let message = root
-                                .tr("连续 3 首拉流失败，已暂停（检查网络或签名服务）")
-                                .to_string();
-                            root.notify_error_once("consecutive-stream-failures", message);
-                        } else if !root.queue.is_empty() {
-                            root.next_track(cx);
+                        if should_skip_to_next(&failure) {
+                            root.consecutive_failures += 1;
+                            if root.consecutive_failures >= PLAY_FAILURE_HALT_AFTER {
+                                root.halt_playback();
+                                root.notify_error_once(
+                                    "consecutive-stream-failures",
+                                    root.tr("连续 3 首没播出来，已暂停").to_string(),
+                                );
+                            } else if !root.queue.is_empty() {
+                                root.next_track(cx);
+                            } else {
+                                root.halt_playback();
+                            }
                         } else {
-                            root.playing = false;
+                            // 全局性故障（登录 / 签名服务 / 权益 / 磁盘）：换一首也一样失败。
+                            // 停下并把修复动作留在状态里，别用连续跳过把全局故障
+                            // 伪装成「这几首运气不好」。
+                            root.halt_playback();
                         }
                     }
                 }
@@ -2152,7 +2240,7 @@ impl Root {
                 self.set_status_text(self.tr("设置已保存"));
             }
             Some(Err(err)) => {
-                let message = self.localized("保存失败：{err}", &[err.to_string()]);
+                let message = self.failure_text("保存失败", &err, SAVE_TEXT);
                 self.notify_error_once("settings-save-failed", message);
             }
             None => {
@@ -2192,6 +2280,102 @@ fn apply_external_open(cx: &mut Context<Root>, target: ExternalOpen) {
 /// 预取失败冷却：失败的曲目 60s 内不再重试（巡检会把永久失败的歌无限重试，
 /// 持续打签名服务和网络）。
 const PREFETCH_RETRY_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(60);
+/// 阶段名的中文原文（稳定 i18n key）。
+///
+/// 「地址解析（含签名）」不是笔误：上游把这两步的失败压成了同一个无相位错误，
+/// 现在分不开就明说分不开，别假装报出了四个独立阶段。
+fn stage_label(stage: Stage) -> &'static str {
+    match stage {
+        Stage::ResolveStream => "地址解析（含签名）",
+        Stage::Transfer => "音频体传输",
+        Stage::Unpack => "解密落盘",
+        Stage::Input => "参数",
+        Stage::Network => "网络传输",
+    }
+}
+
+/// 日志里的装载失败上下文。阶段名也走词典：界面是什么语言，日志就是什么语言，
+/// 不必让用户（或替用户看日志的人）在英文界面里读中文阶段名。
+fn load_failure_context(stage: Stage, language: Language) -> String {
+    format!("播放装载失败（{}）", language.text(stage_label(stage)))
+}
+
+/// 一次播放尝试失败后给人看的那一句（中文原文即稳定 i18n key）。
+///
+/// TLS 握手失败、超时、DNS 对用户是同一件事，合并成一条——多个可能原因不该甩给用户排查
+/// （Microsoft / NN/g 的成文准则）。上游技术原文一律只进 `log_failure`，不上界面。
+/// 三条共用说法 `REMOTE_TEXT` / `SAVE_TEXT` / `RETRY_TEXT` 定义在 [`super`]。
+fn play_failure_text(failure: &PlaybackFailure) -> &'static str {
+    match failure.action {
+        RecoveryAction::Relogin => "登录已过期，请重新登录。",
+        RecoveryAction::CheckSigner => "这首歌暂时放不出来。签名服务不可用，可在设置里更换。",
+        RecoveryAction::CheckEntitlement | RecoveryAction::PickAnother => {
+            "这首歌在你的账号下无法播放。"
+        }
+        RecoveryAction::FreeSpace => "本地缓存写入失败，检查磁盘空间。",
+        RecoveryAction::Nothing => match failure.stage {
+            Stage::Unpack => "本地缓存写入失败，检查磁盘空间。",
+            // 参数本身不合法是我们的问题，不该让用户去查网络。
+            Stage::Input => "这首歌暂时放不出来。",
+            _ => "暂时连不上，检查网络后重试。",
+        },
+    }
+}
+
+/// 这类失败要不要换一首再试。
+///
+/// * 下架 / 取不到（`PickAnother`）与纯网络抖动（`Nothing`）→ 换，队列里还有别的歌；
+/// * 登录、签名服务、权益、磁盘 → 换一首也一样失败，停下来把动作告诉用户，
+///   别用「跳过」把同一个全局故障伪装成单首曲目的问题。
+fn should_skip_to_next(failure: &PlaybackFailure) -> bool {
+    matches!(
+        failure.action,
+        RecoveryAction::PickAnother | RecoveryAction::Nothing
+    )
+}
+
+/// 连败封顶阈值：连续这么多首装载失败就停下，别再替用户往后翻。
+const PLAY_FAILURE_HALT_AFTER: u32 = 3;
+/// 熔断复位判据：声音播到这么多秒才算「真的缓过来」。
+const PLAYBACK_RECOVER_SECONDS: f64 = 3.0;
+
+/// 一次「播出去了没有」的判定材料。
+///
+/// `PlaybackSnapshot` 有 `pub(crate)` 字段，本 crate 连 `..Default::default()` 都构造不出，
+/// 所以判定放在这个自有小结构上，测试可以离线直接喂数据。
+struct AttemptProgress {
+    /// 最近一次**成功装载**的引擎序号；一旦有装载失败就作废。
+    token: Option<u64>,
+    load_seq: u64,
+    playing: bool,
+    position_seconds: f64,
+    errored: bool,
+}
+
+impl AttemptProgress {
+    fn of(snap: &PlaybackSnapshot, token: Option<u64>) -> Self {
+        Self {
+            token,
+            load_seq: snap.load_seq,
+            playing: snap.playing,
+            position_seconds: snap.position_seconds,
+            errored: !snap.error.is_empty(),
+        }
+    }
+
+    /// 连败该不该清零：**最近一次成功装载**的那首真的播出去若干秒才算。
+    ///
+    /// 判据刻意不看「此刻有没有声音」：上一首还在放而后面几首装载失败时，ambient
+    /// 的播放状态会把计数一直清零，封顶就永远触发不了（真机踩过）。归属到最近一次
+    /// 尝试才是业界一致做法——gRPC 的 attempt、Media3 的 `loadTaskId`/`EventTime`、
+    /// mpv 挂在 playlist entry 上的 `init_failed` 都是这个形状。
+    fn recovered(self) -> bool {
+        self.token == Some(self.load_seq)
+            && self.playing
+            && !self.errored
+            && self.position_seconds >= PLAYBACK_RECOVER_SECONDS
+    }
+}
 
 /// 预取数量：环境变量 `SODAM_PREFETCH_COUNT`（默认 3，解析失败/为 0 用默认）。
 fn prefetch_ahead_count() -> usize {
@@ -2211,7 +2395,13 @@ fn finished_event_is_current(
 ) -> bool {
     let stale_finished = seek_seq != *last_seek_seq;
     *last_seek_seq = seek_seq;
-    finished_seq != *last_finished_seq && !stale_finished
+    let current = finished_seq != *last_finished_seq && !stale_finished;
+    // 只消费一次：成功处理过完成事件后回写，否则已上报的 finished 会在
+    // 下一页心跳里继续返回 true，自动切换到下一首。
+    if current {
+        *last_finished_seq = finished_seq;
+    }
+    current
 }
 
 /// 预取并发上限：环境变量 `SODAM_PREFETCH_CONCURRENCY`（默认 2）。
@@ -2221,6 +2411,66 @@ fn prefetch_concurrency() -> usize {
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|count| *count > 0)
         .unwrap_or(2)
+}
+
+#[cfg(test)]
+mod failure_text_tests {
+    use super::*;
+
+    /// 界面只说人话：不复述上游技术原文，也不带接口地址。
+    #[test]
+    fn play_failure_text_is_human_only() {
+        let raw = "soda track_v2 failed: https://x.test/a?sign=SECRET: tls connection init failed";
+        let signer = "这首歌暂时放不出来。签名服务不可用，可在设置里更换。";
+        let no_rights = "这首歌在你的账号下无法播放。";
+        let cache = "本地缓存写入失败，检查磁盘空间。";
+        let offline = "暂时连不上，检查网络后重试。";
+        let relogin = "登录已过期，请重新登录。";
+        let cant_play = "这首歌暂时放不出来。";
+        let at = |stage, action| {
+            play_failure_text(&PlaybackFailure::new(
+                stage,
+                Retryability::Never,
+                action,
+                raw,
+            ))
+        };
+
+        assert_eq!(at(Stage::Network, RecoveryAction::Nothing), offline);
+        assert_eq!(at(Stage::Transfer, RecoveryAction::Nothing), offline);
+        assert_eq!(at(Stage::Unpack, RecoveryAction::Nothing), cache);
+        assert_eq!(at(Stage::Input, RecoveryAction::Nothing), cant_play);
+        assert_eq!(at(Stage::ResolveStream, RecoveryAction::Relogin), relogin);
+        assert_eq!(
+            at(Stage::ResolveStream, RecoveryAction::CheckSigner),
+            signer
+        );
+        assert_eq!(
+            at(Stage::ResolveStream, RecoveryAction::CheckEntitlement),
+            no_rights
+        );
+        assert_eq!(
+            at(Stage::ResolveStream, RecoveryAction::PickAnother),
+            no_rights
+        );
+        assert_eq!(at(Stage::ResolveStream, RecoveryAction::FreeSpace), cache);
+
+        for stage in [Stage::Network, Stage::Transfer, Stage::ResolveStream] {
+            let text = at(stage, RecoveryAction::Nothing);
+            assert!(!text.contains("tls"), "{text}");
+            assert!(!text.contains("://"), "{text}");
+            assert!(!text.contains("SECRET"), "{text}");
+        }
+    }
+
+    /// 共用说法里不该再出现 `{err}` 占位符——那等于把原文再塞回界面。
+    #[test]
+    fn shared_failure_texts_carry_no_placeholders() {
+        for text in [REMOTE_TEXT, SAVE_TEXT, RETRY_TEXT] {
+            assert!(!text.contains("{err}"), "{text}");
+            assert!(!text.contains("：:"), "{text}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2244,19 +2494,29 @@ mod external_open_tests {
             &mut last_finished,
             &mut last_seek
         ));
-        last_finished = 1;
+        assert_eq!(last_finished, 1);
+        // 同一个完成事件不能被连续两拍都消费。
+        assert!(!finished_event_is_current(
+            1,
+            0,
+            &mut last_finished,
+            &mut last_seek
+        ));
+        // seek 会让 seek 前积压的完成事件失效。
         assert!(!finished_event_is_current(
             2,
             1,
             &mut last_finished,
             &mut last_seek
         ));
+        // 首次消费后回写，让下一首的新完成事件仍能推进。
         assert!(finished_event_is_current(
             3,
             1,
             &mut last_finished,
             &mut last_seek
         ));
+        assert_eq!(last_finished, 3);
     }
 
     #[test]
@@ -2269,5 +2529,54 @@ mod external_open_tests {
             &mut last_finished,
             &mut last_seek
         ));
+    }
+}
+
+#[cfg(test)]
+mod playback_budget_tests {
+    use super::*;
+    use crate::ui::i18n::Language;
+
+    fn progress(token: Option<u64>, seq: u64, playing: bool, at: f64) -> AttemptProgress {
+        AttemptProgress {
+            token,
+            load_seq: seq,
+            playing,
+            position_seconds: at,
+            errored: false,
+        }
+    }
+
+    /// 复位必须归属到**最近一次成功装载**：上一首还在放不算缓过来。
+    #[test]
+    fn streak_resets_only_for_the_latest_attempt() {
+        let fresh = progress(Some(7), 7, true, PLAYBACK_RECOVER_SECONDS).recovered();
+        assert!(fresh, "最新一次尝试播满了就该复位");
+        // 装载失败把 token 作废之后，旧曲继续播放不该抵账
+        let stale = progress(None, 5, true, 90.0).recovered();
+        assert!(!stale, "上一首还在放不该抵账");
+        // 引擎已经翻到别的装载序号
+        let newer = progress(Some(6), 7, true, 90.0).recovered();
+        assert!(!newer, "进展属于别的尝试");
+    }
+
+    /// 归属对了，还要真的播出去若干秒、且没报错。
+    #[test]
+    fn streak_needs_audible_progress() {
+        let early = progress(Some(3), 3, true, PLAYBACK_RECOVER_SECONDS - 0.1).recovered();
+        assert!(!early, "刚交给引擎不该清零");
+        let paused = progress(Some(3), 3, false, 90.0).recovered();
+        assert!(!paused, "暂停中不该复位");
+        let mut broken = progress(Some(3), 3, true, 90.0);
+        broken.errored = true;
+        assert!(!broken.recovered(), "带错误不该复位");
+    }
+
+    /// 封顶的数字改动必须连带那句用户看到的文案。
+    #[test]
+    fn halt_threshold_matches_the_copy() {
+        let shown = Language::Chinese.text("连续 3 首没播出来，已暂停");
+        let hits = shown.contains(&PLAY_FAILURE_HALT_AFTER.to_string());
+        assert!(hits, "{shown}");
     }
 }

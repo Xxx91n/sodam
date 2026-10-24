@@ -1,5 +1,6 @@
 //! 搜索、音乐人和专辑详情相关动作。
 
+use super::{REMOTE_TEXT, RETRY_TEXT, SAVE_TEXT};
 use gpui::prelude::*;
 use gpui::Context;
 use sodam_core::library::SearchScope;
@@ -31,7 +32,7 @@ impl Root {
             Err(err) => {
                 self.notify_error_once(
                     "search-history-save-failed",
-                    self.localized("清空搜索历史失败：{err}", &[err.to_string()]),
+                    self.failure_text("清空搜索历史失败", &err, RETRY_TEXT),
                 );
             }
         }
@@ -55,7 +56,7 @@ impl Root {
             Err(err) => {
                 self.notify_error_once(
                     "search-history-save-failed",
-                    self.localized("保存搜索历史设置失败：{err}", &[err.to_string()]),
+                    self.failure_text("保存搜索历史设置失败", &err, SAVE_TEXT),
                 );
             }
         }
@@ -130,7 +131,7 @@ impl Root {
                         root.ensure_covers(&covers, cx);
                     }
                     Err(err) => {
-                        let message = root.localized("搜索失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("搜索失败", &err, REMOTE_TEXT);
                         root.notify_error_once("search-failed", message);
                         root.results = Arc::new(Vec::new());
                         root.search_results = SearchResults {
@@ -202,7 +203,7 @@ impl Root {
                         root.set_status("音乐人已加载", &[]);
                     }
                     Err(err) => {
-                        let message = root.localized("读取音乐人失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("读取音乐人失败", &err, REMOTE_TEXT);
                         root.notify_error_once("artist-load-failed", message);
                     }
                 }
@@ -290,7 +291,7 @@ impl Root {
                     }
                     Err(err) => {
                         let message =
-                            root.localized("加载更多音乐人歌曲失败：{err}", &[err.to_string()]);
+                            root.failure_text("加载更多音乐人歌曲失败", &err, REMOTE_TEXT);
                         root.notify_warning_once("artist-more-failed", message);
                     }
                 }
@@ -376,7 +377,7 @@ impl Root {
                         root.set_status_text(message);
                     }
                     Err(err) => {
-                        let message = root.localized("读取专辑失败：{err}", &[err.to_string()]);
+                        let message = root.failure_text("读取专辑失败", &err, REMOTE_TEXT);
                         root.notify_error_once("album-load-failed", message);
                     }
                 }

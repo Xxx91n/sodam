@@ -219,6 +219,8 @@ fn main() {
         return;
     };
 
+    sodam_core::log_outlet::init();
+
     gpui_platform::application()
         .with_assets(ui::icons::Assets)
         .with_quit_mode(gpui::QuitMode::Explicit)

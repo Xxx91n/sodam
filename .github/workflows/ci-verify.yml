@@ -1,0 +1,109 @@
+name: CI verify
+
+# 验证专用 workflow，只存在于 ci/*-run 旁支分支上：修复分支永远不含这个文件，
+# 所以它不可能混进 PR。作用是本地零编译的前提下，先拿到四平台的 clippy/test 信号，
+# 再产出一个能双击运行的安装包供人工验收。
+#
+# `gh workflow run` 只认默认分支上的 workflow 文件，所以这里额外挂一个 push 触发：
+# 旁支分支上的这个文件被推到 fork 时就会自动跑一轮。
+on:
+  push:
+    branches:
+      - 'ci/*-run'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-latest
+          - name: Linux aarch64
+            runner: ubuntu-24.04-arm
+          - name: macOS arm64
+            runner: macos-15
+          - name: Windows x64
+            runner: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config git \
+            libasound2-dev libdbus-1-dev libfontconfig1-dev \
+            libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libxcb1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      # 顺序刻意是 clippy -> test -> fmt：本地不跑 cargo，格式漂移不该白烧一整轮，
+      # 先把真正有价值的编译与测试信号拿回来。
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+  windows-package:
+    name: Windows installer and binary for manual test
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked --workspace
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+        shell: pwsh
+
+      # 版本串带 test.<run-number>：产物与已发布的同版本号安装包不会互相顶掉，
+      # 每轮验证的包名也自带轮次。
+      - name: Create Windows installer
+        shell: pwsh
+        run: |
+          $base = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' |
+            Select-Object -First 1).Matches.Groups[1].Value
+          $version = "$base-test.$env:GITHUB_RUN_NUMBER"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" `
+            packaging/windows/sodam.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = "release/sodam-$version-windows-x64-setup.exe"
+          if (-not (Test-Path $setup)) { throw "installer not found: $setup" }
+          Get-ChildItem release | Format-Table Name, Length
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: sodam-windows-x64-installer
+          path: release/sodam-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sodam-windows-x64
+          path: target/release/sodam.exe
+          if-no-files-found: error
+          retention-days: 7

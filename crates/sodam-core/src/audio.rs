@@ -19,6 +19,13 @@ use crate::models::TrackItem;
 use crate::session::CachedTrack;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// 引擎能给出的用户说法只有这两种：它们描述「用户现在能做什么」，不复述驱动/解码器原文。
+///
+/// 技术原文一律进 `log_engine_failure`。文案不许承诺引擎没在做的事——「正在重新获取」
+/// 就不实：本地文件失效之后没有任何自动重取，要用户按下播放才会重新取流。
+const TRACK_FILE_UNREADABLE: &str = "这首歌的文件读不出来，请重新播放。";
+const AUDIO_DEVICE_UNAVAILABLE: &str = "音频设备不可用，请重新播放。";
+
 /// 播放器状态快照（UI 每帧读这个，加锁时间极短）。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PlaybackSnapshot {
@@ -321,10 +328,21 @@ fn rebuild_player_at(
     volume: f32,
     paused: bool,
 ) -> Result<rodio::Player, String> {
-    let file = std::fs::File::open(path).map_err(|err| format!("重新打开音频文件失败：{err}"))?;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) => {
+            log_engine_failure("重新打开音频文件失败", &err);
+            return Err(TRACK_FILE_UNREADABLE.to_string());
+        }
+    };
     // 使用 TryFrom<File>，让 rodio 知道 byte length，后退 seek 才可靠。
-    let decoder =
-        rodio::Decoder::try_from(file).map_err(|err| format!("重新解码音频失败：{err}"))?;
+    let decoder = match rodio::Decoder::try_from(file) {
+        Ok(decoder) => decoder,
+        Err(err) => {
+            log_engine_failure("重新解码音频失败", &err);
+            return Err(TRACK_FILE_UNREADABLE.to_string());
+        }
+    };
     let (player, source) = rodio::Player::new();
     player.set_volume(volume);
     player.append(decoder);
@@ -548,12 +566,8 @@ fn audio_thread(
                     Ok(file) => file,
                     Err(err) => {
                         log_engine_failure("打开音频文件失败", &err);
-                        load_failed(
-                            &state,
-                            &track,
-                            sequence,
-                            "没能读出这首歌的音频文件。".to_string(),
-                        );
+                        let message = TRACK_FILE_UNREADABLE.to_string();
+                        load_failed(&state, &track, sequence, message);
                         continue;
                     }
                 };
@@ -563,12 +577,8 @@ fn audio_thread(
                         // 无效缓存不能永久冒充命中；下一次播放重新下载，而不是反复读坏文件。
                         log_engine_failure("解码失败（文件可能未解密）", &err);
                         crate::cache::invalidate_audio(&path);
-                        load_failed(
-                            &state,
-                            &track,
-                            sequence,
-                            "这首歌的文件读不出来，正在重新获取。".to_string(),
-                        );
+                        let message = TRACK_FILE_UNREADABLE.to_string();
+                        load_failed(&state, &track, sequence, message);
                         continue;
                     }
                 };
@@ -665,7 +675,9 @@ fn audio_thread(
                         Ok(device) => output = Some(device),
                         Err(err) => {
                             finished_reported = true;
-                            mark_seek_failed(&state, format!("音频设备不可用：{err}"));
+                            log_engine_failure("重开音频输出失败", &err);
+                            let message = AUDIO_DEVICE_UNAVAILABLE.to_string();
+                            mark_seek_failed(&state, message);
                             continue;
                         }
                     }
@@ -677,7 +689,8 @@ fn audio_thread(
                 };
                 let Some(device) = output.as_ref() else {
                     finished_reported = true;
-                    mark_seek_failed(&state, "音频设备不可用".to_string());
+                    let message = AUDIO_DEVICE_UNAVAILABLE.to_string();
+                    mark_seek_failed(&state, message);
                     continue;
                 };
                 match rebuild_player_at(device.mixer(), &path, target, volume, paused) {

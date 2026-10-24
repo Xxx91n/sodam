@@ -26,7 +26,8 @@ To provide sign-in and playback, SodaM stores the following on the local device:
 - a device identity used for request signing (`device_id`, `iid`, `fp`);
 - preferences such as volume, theme, language, audio quality, shortcuts, and
   search history;
-- cached audio and artwork.
+- cached audio and artwork;
+- diagnostic logs.
 
 The configuration file is stored at `%APPDATA%\sodam\config.json` on Windows,
 `~/.config/sodam/config.json` on Linux, and
@@ -37,8 +38,10 @@ Signing out or deleting the configuration removes local sign-in information.
 Clearing the cache removes cached audio and artwork.
 Audio and artwork caches are written beneath a `sodam/` directory in the
 system cache directory and can be redirected to another local directory with
-`SODAM_CACHE_DIR`. Unix systems may also create a local socket used only to
-detect an already-running application instance; it contains no account data.
+`SODAM_CACHE_DIR`. Diagnostic logs are written beneath `sodam/logs/` in the user
+data directory and can be redirected with `SODAM_LOG_DIR`. Unix systems may also
+create a local socket used only to detect an already-running application instance;
+it contains no account data.
 
 ## Requests to Qishui Music
 
@@ -93,12 +96,17 @@ Users who do not want to send a Cookie to a remote signing service should run
 functions do not depend on selling data to third parties, and signing requests
 are not used for advertising or profiling.
 
-## Optional Diagnostics
+## Diagnostic Logs
 
-When a user sets `SODAM_REPORT_LOG` or `SODAM_PLAYER_LOG`, SodaM prints request
-result summaries to the current terminal. These logs may contain track IDs and
-the account user ID, but do not intentionally include Cookies, signing tokens,
-or signature headers. Do not publish logs produced with these switches enabled.
+SodaM writes diagnostic logs to local files by default to help troubleshoot playback issues. Log files are saved in the user data directory on each platform:
+
+- Windows: `%LOCALAPPDATA%\sodam\logs\sodam.log`
+- Linux: `~/.local/state/sodam/logs/sodam.log` (respecting `XDG_STATE_HOME`)
+- macOS: `~/Library/Application Support/sodam/logs/sodam.log`
+
+The log directory can also be redirected via the `SODAM_LOG_DIR` environment variable.
+
+The logs record application startup, playback attempt stages, and necessary error diagnostics. To protect privacy, logs **never contain** sign-in Cookies, signing tokens, signature request headers, or full URL query strings (query parameters are stripped before writing to disk). The log file size is capped at 5 MB each with at most 5 rotated files kept. Because logs still contain track IDs and sanitized API paths, do not publish or publicly share log files.
 
 ## Sharing and Sale
 

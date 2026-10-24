@@ -24,6 +24,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// 远程读取类失败的统一说法：读不到歌单、收藏、搜索、推荐都是这一句。
+pub(crate) const REMOTE_TEXT: &str = "出现了一点问题，检查网络后重试。";
+/// 本地保存/写入类失败的统一说法：这类失败和网络无关。
+pub(crate) const SAVE_TEXT: &str = "没能保存，检查磁盘空间后重试。";
+/// 既不是网络也不是写入的失败（例如本地编码出错）：不指责任何一方，只说重试。
+pub(crate) const RETRY_TEXT: &str = "出现了一点问题，请重试。";
+
 /// 封面请求池：有界并发 + 去重 + 队列上限。
 ///
 /// 直接对整页每张封面发请求（尤其是 300 首的歌单）会把网络和 CDN 打爆，
@@ -342,13 +349,28 @@ pub struct Root {
     pub(crate) play_seq: u64,
     /// 播放错误（显示在播放栏：常驻状态条已移除，错误必须有地方可见）。
     pub playback_error: Option<String>,
-    /// 连续拉流失败次数（>=3 就停下，避免无限跳歌）。
+    /// 连续装载失败次数（>=3 就停下，避免无限跳歌）。
+    ///
+    /// 清零判据是「最近一次成功装载真的播出去若干秒」，不是「此刻有声」：
+    /// 见 `AttemptProgress::recovered` 与下面的 `progress_token`。
     pub(crate) consecutive_failures: u32,
+    /// 最近一次**成功装载**交给引擎的序号；任何一次装载失败都把它作废。
+    ///
+    /// 连败复位只认「这个序号 == 引擎当前快照的 load_seq」，也就是进展必须归属于
+    /// 最新那次尝试。没有它，上一首还在放就会把计数每拍清零，封顶永远触发不了。
+    pub(crate) progress_token: Option<u64>,
+    /// 连败封顶闸门：打开后自动续播（播完切下一首、预取巡检）全部停住，
+    /// 直到用户主动播放。只写 `playing = false` 拦不住——引擎仍在出声，
+    /// 「已暂停」就成了谎话。
+    pub(crate) playback_halted: bool,
     /// 正在预取的曲目 id 集合（多首并行去重；预取结果只写缓存，不改 UI）。
     pub(crate) prefetch_inflight: HashSet<String>,
-    /// 预取失败冷却表（曲目 id → 最近失败时刻）：巡检不能把永久失败的歌
-    /// （下架/地区受限）每 5 秒无限重试，60s 内不再排。
-    pub(crate) prefetch_failed: HashMap<String, std::time::Instant>,
+    /// 预取失败表（曲目 id →（最近失败时刻，可否重试））。
+    ///
+    /// 冷却类期满可以再排；**永久失败（下架 / 无权益 / 签名服务鉴权）不再自动排**——
+    /// 巡检每 5 秒重排一次就是在持续打扰全体用户共享的那台签名服务。
+    pub(crate) prefetch_failed:
+        HashMap<String, (std::time::Instant, sodam_core::failure::Retryability)>,
     /// 预取巡检节拍：心跳每 200ms 自增，每 25 拍（约 5s）补一次预取。
     pub(crate) prefetch_patrol: u32,
     /// 缓存统计快照（音频字节, 歌曲数, 封面字节, 封面张数）：
@@ -360,8 +382,9 @@ pub struct Root {
     pub(crate) pending_engine_load: Option<u64>,
     /// 正在加载（下载/解密）的曲目：非空时播放栏显示 loading，且进度条不可拖。
     pub pending_track: Option<TrackItem>,
-    /// 已处理过的「播完」序号（配合引擎的 finished_seq 自动切歌）。
+    /// 已处理过的完成事件（曲目结束序号 + 跳转序号）。
     pub(crate) last_finished_seq: u64,
+    pub(crate) last_seek_seq: u64,
     /// 拖动进度条时的预览位置（0.0~1.0）：拖动中只改它，松手才真跳。
     pub progress_preview: Option<f32>,
     /// 歌词页大封面：切曲后的 `(track_id, 开始时刻)`；管「至少 200ms 加载态」的门。
@@ -426,6 +449,7 @@ impl Root {
             }
         };
         let queue = Queue::new(Vec::<TrackItem>::new());
+        let engine_progress = engine.snapshot();
 
         let logged_in = !settings.cookie.trim().is_empty();
         let play_reporter = PlayReporter::new(settings.clone());
@@ -454,6 +478,8 @@ impl Root {
             play_seq: 0,
             playback_error: None,
             consecutive_failures: 0,
+            progress_token: None,
+            playback_halted: false,
             playing: false,
             recommendation: None,
             loading_recommendation: false,
@@ -560,7 +586,8 @@ impl Root {
             cache_clearing: false,
             pending_engine_load: None,
             pending_track: None,
-            last_finished_seq: 0,
+            last_finished_seq: engine_progress.finished_seq,
+            last_seek_seq: engine_progress.seek_seq,
             progress_preview: None,
             lyrics_cover_gate: None,
             queue_cache: (0, Arc::new(Vec::new())),
@@ -1116,8 +1143,33 @@ impl Root {
 
     /// 普通操作反馈：只进入底部状态行，不触发全局 message。
     pub fn set_status_text(&mut self, text: impl Into<String>) {
-        self.status = text.into();
+        self.status = sodam_core::failure::strip_urls_for_user(&text.into());
         self.show_status();
+    }
+
+    /// 技术原文的唯一去处：现在只进终端（发布版是 GUI 子系统程序，等于看不到），
+    /// 日志出口落地后由它写文件。界面文案一律不用它——用户只看人话。
+    ///
+    /// 进这里的内容已切断查询串：日志里也不许出现签名 token。
+    pub(crate) fn log_failure(&self, context: &str, error: impl std::fmt::Display) {
+        eprintln!(
+            "[failure] {context}: {}",
+            sodam_core::failure::redact_url_secrets(&error.to_string())
+        );
+    }
+
+    /// 记录技术原文，并返回给用户看的那一句。
+    ///
+    /// 界面文案一律走这里，不再复述 `{err}`：普通用户看 `tls connection init failed`
+    /// 得不到任何行动信息，而它也不该被藏进折叠区——原文的去处是日志。
+    pub(crate) fn failure_text(
+        &self,
+        context: &str,
+        error: impl std::fmt::Display,
+        text: &'static str,
+    ) -> String {
+        self.log_failure(context, error);
+        self.tr(text).to_string()
     }
 
     /// 重要成功结果：状态 + 全局轻提示。
@@ -1159,7 +1211,9 @@ impl Root {
         text: String,
         key: Option<&str>,
     ) -> u64 {
-        self.status = text;
+        // 上屏前摘掉接口地址：内部端点对普通用户既无意义又泄露拓扑；带签名 token 的查询串
+        // 更早就不该出现。给维护者看的原文留给日志（`PlaybackFailure::detail`）。
+        self.status = sodam_core::failure::strip_urls_for_user(&text);
         self.show_status();
         self.push_message_with_key(
             kind,
@@ -1190,11 +1244,7 @@ impl Root {
                 self.set_status_text(status);
             }
             Err(err) => {
-                let message = if self.language.is_zh() {
-                    language.textf("语言已切换，但保存失败：{err}", &[err.to_string()])
-                } else {
-                    format!("Language switched, but saving failed: {err}")
-                };
+                let message = self.failure_text("语言已切换，但保存失败", &err, SAVE_TEXT);
                 self.notify_warning_once("language-save-failed", message);
             }
         }

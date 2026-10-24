@@ -1,6 +1,7 @@
 //! 右侧内容区路由与共享列表组件。
 
 use super::*;
+use crate::app::SAVE_TEXT;
 use crate::ui::i18n::Language;
 #[cfg(target_os = "linux")]
 use sodam_core::config::TitlebarMode;
@@ -217,8 +218,7 @@ fn window_controls_section(root: &Root, cx: &mut Context<Root>) -> Option<AnyEle
             .on_click(cx.listener(move |root, _event: &ClickEvent, _window, cx| {
                 root.settings.titlebar = mode.key().to_string();
                 if let Err(err) = root.settings.save() {
-                    let message =
-                        root.localized("窗口按钮已切换，但保存失败：{err}", &[err.to_string()]);
+                    let message = root.failure_text("窗口按钮已切换，但保存失败", &err, SAVE_TEXT);
                     root.notify_error_once("titlebar-save-failed", message);
                 } else {
                     let status = match mode {
@@ -639,9 +639,10 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                                     root.language_follows_system = true;
                                     root.settings.language = "auto".to_string();
                                     if let Err(err) = root.settings.save() {
-                                        let message = root.localized(
-                                            "语言已恢复为跟随系统，但保存失败：{err}",
-                                            &[err.to_string()],
+                                        let message = root.failure_text(
+                                            "语言已恢复为跟随系统，但保存失败",
+                                            &err,
+                                            SAVE_TEXT,
                                         );
                                         root.notify_error_once("language-save-failed", message);
                                     } else {

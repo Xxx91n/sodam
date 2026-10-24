@@ -134,7 +134,8 @@ scripts/run.sh     # 启动 GUI（带 MemoryMax 护栏，编译时不要跑）</
     <h2>发布流程</h2>
     <ol>
       <li>改版本号：<code>Cargo.toml</code> 的 <code>[workspace.package] version</code>（<code>Cargo.lock</code> 同步）、<code>packaging/arch/PKGBUILD</code>、README 里的版本示例。</li>
-      <li>提交 <code>chore: 发布 x.y.z</code>，然后打<b>附注 tag</b>，tag message 就是发布说明：</li>
+      <li>先由发版工作流生成产物，按 <code>SHA256SUMS</code> 更新 Homebrew Cask 并提交；</li>
+      <li>在包含正式 Cask 校验和的提交上打<b>附注 tag</b>，tag message 就是发布说明：</li>
     </ol>
     <div class="code">
       <header><span>发版</span><button class="copy" data-copy="self">复制</button></header>
@@ -144,7 +145,7 @@ git push origin v0.3.5</pre>
     </div>
     <p>CI 会构建四平台产物、创建 GitHub Release，然后自动重建 pacman 源并部署本官网。</p>
     <ul>
-      <li>发布后把 macOS zip 的 sha256 同步到 <code>packaging/homebrew/sodam.rb</code> 与 homebrew-tap 仓库。</li>
+      <li>用 <code>packaging/homebrew/sync-tap.sh</code> 把同一 Cask 同步到 homebrew-tap 仓库。</li>
       <li>pacman 源需要补跑时：<code>gh workflow run pages.yml -f tag=v0.3.5</code>。</li>
     </ul>
   </section>

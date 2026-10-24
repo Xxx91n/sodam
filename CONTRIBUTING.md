@@ -79,13 +79,15 @@ scripts/run.sh     # 启动 GUI（带 MemoryMax 护栏）
 
 1. 改版本号：`Cargo.toml` 的 `[workspace.package] version`（`Cargo.lock` 同步）、
    `packaging/arch/PKGBUILD`、README 里的版本示例。
-2. 提交 `chore: 发布 x.y.z`，然后打**附注 tag**，tag message 就是发布说明：
+2. 发版工作流以 `workflow_dispatch` 先构建产物；从 `SHA256SUMS` 取 macOS zip
+   的 sha256，更新 `packaging/homebrew/sodam.rb` 后提交。
+3. 在包含正式 cask 校验和的提交上打**附注 tag**，tag message 就是发布说明：
    ```bash
    git tag -a v0.3.2 -F changelog.txt
    git push origin main && git push origin v0.3.2
    ```
-3. CI 构建四平台产物、创建 GitHub Release，并自动重建 pacman 源与官网。
-4. 发版后把 macOS zip 的 sha256 同步到 `packaging/homebrew/sodam.rb` 与
+4. tag 触发的 CI 构建四平台产物、创建 GitHub Release，并自动重建 pacman 源与官网。
+5. 用 `packaging/homebrew/sync-tap.sh` 把同一 cask 同步到
    [homebrew-tap](https://github.com/sodahub-org/homebrew-tap)。
 
 ## 行为准则

@@ -4,6 +4,7 @@
 //! 这样按下新组合键时不会顺带触发一次播放动作。
 
 use super::*;
+use crate::app::SAVE_TEXT;
 use crate::shortcuts::{self, Slot};
 
 /// 存储串 → 给人看的按键形式。
@@ -242,9 +243,10 @@ fn shortcut_row(root: &Root, slot: Slot, cx: &mut Context<Root>) -> AnyElement {
                                 };
                                 root.set_status_text(status);
                                 if let Err(err) = root.settings.save() {
-                                    let message = root.localized(
-                                        "快捷键已恢复默认，但保存失败：{err}",
-                                        &[err.to_string()],
+                                    let message = root.failure_text(
+                                        "快捷键已恢复默认，但保存失败",
+                                        &err,
+                                        SAVE_TEXT,
                                     );
                                     root.notify_error_once("shortcut-save-failed", message);
                                 }
@@ -380,7 +382,7 @@ pub(crate) fn section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                     );
                     if let Err(err) = root.settings.save() {
                         let message =
-                            root.localized("快捷键已更新，但保存失败：{err}", &[err.to_string()]);
+                            root.failure_text("快捷键已更新，但保存失败", &err, SAVE_TEXT);
                         root.notify_error_once("shortcut-save-failed", message);
                     }
                     cx.stop_propagation();

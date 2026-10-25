@@ -377,7 +377,7 @@ fn search_history_section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
 
 /// 诊断日志：显示目录、打开目录、只清日志。
 ///
-/// 与「缓存」刻意分开：日志在数据目录，`清空缓存` 不碰它（见 ADR 0002）。
+/// 与「缓存」刻意分开：日志在数据目录，`清空缓存` 不碰它（见 #53）。
 fn diagnostic_log_section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
     let log_dir = sodam_core::log_outlet::log_dir();
     div()

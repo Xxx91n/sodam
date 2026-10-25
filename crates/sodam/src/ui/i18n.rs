@@ -56,8 +56,13 @@ impl Language {
         if language.is_zh() {
             return key;
         }
-        #[allow(unreachable_patterns)]
-        match key {
+        Self::english_text(key).unwrap_or(key)
+    }
+
+    /// 英文词典查表；`None` 表示没有这一条，界面会回退中文原文。
+    #[allow(unreachable_patterns)]
+    fn english_text(key: &str) -> Option<&'static str> {
+        Some(match key {
             "推荐" => "Discover",
             "听歌模式" => "Listening Modes",
             "搜索" => "Search",
@@ -492,8 +497,8 @@ impl Language {
                 "Following system; choose a language to pin it"
             }
             "{}；音质已按权益自动设为 {}" => "{}; quality set to {}",
-            _ => key,
-        }
+            _ => return None,
+        })
     }
 
     /// 引擎错误文案的查表入口。
@@ -643,5 +648,94 @@ pub fn scene_mode_text(language: Language, sub_queue_type: &str, fallback: &str)
         "sweet_girl" => "Sweet Girl".to_string(),
         "travel" => "Travel".to_string(),
         _ => fallback.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    /// 这几条的英文由调用点自己拼，词典里故意没有。
+    const CALL_SITE_ONLY: &[&str] = &[
+        "Shortcut reset to default",
+        "Shortcut updated",
+        "该组合键已用于「{}」，不能绑定",
+    ];
+
+    fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                rs_files(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// 取出 `needle`（如 `.tr(`）后紧跟的字符串字面量；允许换行缩进。
+    fn literal_keys<'a>(source: &'a str, needle: &str) -> Vec<&'a str> {
+        let mut keys = Vec::new();
+        let mut index = 0;
+        while let Some(found) = source[index..].find(needle) {
+            let after_needle = index + found + needle.len();
+            let rest = &source[after_needle..];
+            let trimmed = rest.trim_start();
+            let skipped = rest.len() - trimmed.len();
+            let Some(body) = trimmed.strip_prefix('"') else {
+                index = after_needle;
+                continue;
+            };
+            let Some(end) = body.find('"') else {
+                break;
+            };
+            let key = &body[..end];
+            if !key.chars().any(|c| matches!(c, '\\' | '\n' | '\r')) {
+                keys.push(key);
+            }
+            index = after_needle + skipped + end + 2;
+        }
+        keys
+    }
+
+    /// 英文界面的静态文案必须都能在词典里查到，否则会静默回退中文。
+    #[test]
+    fn every_static_ui_key_has_an_english_entry() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        rs_files(&src, &mut files);
+        assert!(files.len() > 20, "没扫到源码文件，扫描逻辑可能已失效");
+
+        let mut scanned = 0;
+        let mut missing = Vec::new();
+        for file in files {
+            if file.ends_with("ui/i18n.rs") {
+                continue;
+            }
+            let Ok(source) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            for needle in [".tr(", ".localized("] {
+                for key in literal_keys(&source, needle) {
+                    scanned += 1;
+                    if Language::english_text(key).is_none() && !CALL_SITE_ONLY.contains(&key) {
+                        missing.push(format!("{}: {key}", file.display()));
+                    }
+                }
+            }
+        }
+
+        assert!(scanned > 100, "没扫到 UI 文案，扫描逻辑可能已失效");
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "英文词典缺少这些 key：\n{}",
+            missing.join("\n")
+        );
     }
 }

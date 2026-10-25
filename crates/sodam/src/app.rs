@@ -609,8 +609,11 @@ impl Root {
             engine,
             play_reporter,
         };
-        cx.on_app_quit(|root, _cx| root.preferences_writer.flush())
-            .detach();
+        cx.on_app_quit(|root, _cx| {
+            sodam_core::flush_global();
+            root.preferences_writer.flush()
+        })
+        .detach();
         root.maintain_cache(cx);
         if logged_in {
             root.refresh_account(cx);

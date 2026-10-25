@@ -529,6 +529,31 @@ mod tests {
     }
 
     #[test]
+    fn clear_logs_leaves_cache_and_unrelated_files_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let log_dir = temp.path().join("logs");
+        let cache_dir = temp.path().join("cache");
+        fs::create_dir_all(cache_dir.join("audio")).unwrap();
+        fs::create_dir_all(cache_dir.join("covers")).unwrap();
+        let audio = cache_dir.join("audio").join("song.m4a");
+        let cover = cache_dir.join("covers").join("cover.img");
+        fs::write(&audio, b"audio").unwrap();
+        fs::write(&cover, b"cover").unwrap();
+
+        let outlet = LogOutlet::new(log_dir.clone());
+        outlet.write_line("diagnostic entry");
+        let unrelated = log_dir.join("notes.txt");
+        fs::write(&unrelated, b"keep me").unwrap();
+
+        outlet.clear_logs().unwrap();
+
+        assert!(log_dir.join(LOG_FILE_NAME).exists());
+        assert!(unrelated.exists(), "非日志文件不能被当成诊断日志删掉");
+        assert!(audio.exists(), "音频缓存不受清除日志影响");
+        assert!(cover.exists(), "封面缓存不受清除日志影响");
+    }
+
+    #[test]
     fn test_write_line_redacts_url_secrets() {
         let temp = tempfile::tempdir().unwrap();
         let outlet = LogOutlet::new(temp.path().to_path_buf());

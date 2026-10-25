@@ -375,6 +375,92 @@ fn search_history_section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
     section.into_any_element()
 }
 
+/// 诊断日志：显示目录、打开目录、只清日志。
+///
+/// 与「缓存」刻意分开：日志在数据目录，`清空缓存` 不碰它（见 ADR 0002）。
+fn diagnostic_log_section(root: &Root, cx: &mut Context<Root>) -> AnyElement {
+    let log_dir = sodam_core::log_outlet::log_dir();
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(theme::space::SM))
+        .child(
+            div()
+                .text_size(theme::Text::Large.size())
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme::text())
+                .child(root.tr("诊断日志")),
+        )
+        .child(
+            div()
+                .text_size(theme::Text::Small.size())
+                .text_color(theme::text_muted())
+                .child(root.tr("默认记录在本机，用于排查播放问题；「清空缓存」不会删除它们")),
+        )
+        .child(
+            div()
+                .truncate()
+                .text_size(theme::Text::Small.size())
+                .text_color(theme::text_muted())
+                .child(root.localized("日志目录：{}", &[log_dir.display().to_string()])),
+        )
+        .child(
+            div()
+                .text_size(theme::Text::Small.size())
+                .text_color(theme::text_faint())
+                .child(root.tr("日志可能含接口地址（查询串已移除），请勿公开上传")),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(theme::space::SM))
+                .children([
+                    div()
+                        .id("open-log-directory")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(px(theme::size::CONTROL))
+                        .w(px(140.0))
+                        .rounded(px(theme::radius::ROW))
+                        .bg(theme::surface_elevated())
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme::surface_hover()))
+                        .text_size(theme::Text::Small.size())
+                        .text_color(theme::text())
+                        .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
+                            root.open_log_directory(cx);
+                        }))
+                        .child(root.tr("打开日志目录"))
+                        .into_any_element(),
+                    div()
+                        .id("clear-diagnostic-logs")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(px(theme::size::CONTROL))
+                        .w(px(140.0))
+                        .rounded(px(theme::radius::ROW))
+                        .bg(theme::surface_elevated())
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme::surface_hover()))
+                        .text_size(theme::Text::Small.size())
+                        .text_color(theme::text())
+                        .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
+                            root.clear_diagnostic_logs(cx);
+                        }))
+                        .child(if root.log_clearing {
+                            root.tr("正在清除…")
+                        } else {
+                            root.tr("清除诊断日志")
+                        })
+                        .into_any_element(),
+                ]),
+        )
+        .into_any_element()
+}
+
 pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyElement {
     let options = [
         (
@@ -844,6 +930,7 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                         }),
                 )
         })
+        .child(diagnostic_log_section(root, cx))
         .child(
             div()
                 .flex()

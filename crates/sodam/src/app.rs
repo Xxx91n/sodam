@@ -378,6 +378,8 @@ pub struct Root {
     pub(crate) cache_summary: (u64, usize, u64, usize),
     pub(crate) cache_maintenance_running: bool,
     pub(crate) cache_clearing: bool,
+    /// 正在删除诊断日志；只用于禁用重复点击，与缓存清理互不影响。
+    pub(crate) log_clearing: bool,
     /// 下载完成后交给音频线程的装载序号；避免同一曲目重载/失败时永久 loading。
     pub(crate) pending_engine_load: Option<u64>,
     /// 正在加载（下载/解密）的曲目：非空时播放栏显示 loading，且进度条不可拖。
@@ -584,6 +586,7 @@ impl Root {
             cache_summary: (0, 0, 0, 0),
             cache_maintenance_running: false,
             cache_clearing: false,
+            log_clearing: false,
             pending_engine_load: None,
             pending_track: None,
             last_finished_seq: engine_progress.finished_seq,

@@ -453,6 +453,18 @@ impl Language {
             "自动清理较早使用的歌曲；正在播放或下载的文件暂时保留" => "Older songs are removed automatically; files in use are kept until released",
             "清空缓存" => "Clear Cache",
             "正在清理…" => "Clearing…",
+            "诊断日志" => "Diagnostic Logs",
+            "默认记录在本机，用于排查播放问题；「清空缓存」不会删除它们" => {
+                "Stored on this device to help diagnose playback problems; Clear Cache never removes them"
+            }
+            "日志目录：{}" => "Log directory: {}",
+            "日志可能含接口地址（查询串已移除），请勿公开上传" => {
+                "Logs may contain service URLs (query strings removed). Don't upload them publicly."
+            }
+            "打开日志目录" => "Open Log Folder",
+            "清除诊断日志" => "Clear Diagnostic Logs",
+            "正在清除…" => "Clearing…",
+            "已清除诊断日志" => "Diagnostic logs cleared",
             "音频输出长时间无响应，请重试播放" => "Audio output stopped responding. Try playing again.",
             "音频线程已退出，请重启应用" => "The audio worker stopped. Please restart the app.",
             "签名服务：{}" => "Signer: {}",

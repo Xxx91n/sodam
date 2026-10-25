@@ -207,6 +207,21 @@ mod tests {
         assert_eq!(clear_in(dir.path()), 2);
     }
 
+    /// #60 的回归断言：清空缓存不能顺手删掉排障证据。
+    #[test]
+    fn clearing_cache_keeps_diagnostic_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = temp.path().join("cache");
+        let log_dir = temp.path().join("logs");
+        file(&cache, "audio/song.m4a", 0);
+        file(&cache, "covers/cover.img", 0);
+        let outlet = crate::log_outlet::LogOutlet::new(log_dir.clone());
+        outlet.write_line("diagnostic entry");
+
+        assert_eq!(clear_in(&cache), 2);
+        assert!(log_dir.join(crate::log_outlet::LOG_FILE_NAME).exists());
+    }
+
     #[test]
     fn trim_evicts_oldest_pairs_but_not_active_audio() {
         let dir = tempfile::tempdir().unwrap();

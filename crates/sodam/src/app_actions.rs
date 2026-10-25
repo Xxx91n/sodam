@@ -385,6 +385,41 @@ impl Root {
         cx.notify();
     }
 
+    /// 用系统文件管理器打开诊断日志目录。
+    pub fn open_log_directory(&mut self, cx: &mut Context<Self>) {
+        apply_external_open(cx, log_directory_open_target());
+    }
+
+    /// 只删除诊断日志文件；音频与封面缓存不在同一目录，保持原样。
+    pub(crate) fn clear_diagnostic_logs(&mut self, cx: &mut Context<Self>) {
+        if self.log_clearing {
+            return;
+        }
+        self.log_clearing = true;
+        let work = cx.background_spawn(async {
+            sodam_core::log_outlet::global().map(|outlet| outlet.clear_logs())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |root, cx| {
+                root.log_clearing = false;
+                match result {
+                    Some(Err(err)) => {
+                        let message = root.failure_text("清除诊断日志失败", &err, RETRY_TEXT);
+                        root.notify_error_once("log-clear-failed", message);
+                    }
+                    _ => {
+                        let message = root.tr("已清除诊断日志").to_string();
+                        root.notify_success_once("log-clear", message);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// 跳到队列中的某一首并播放。
     pub fn jump_in_queue(&mut self, index: usize, cx: &mut Context<Self>) {
         if std::env::var("SODAM_PLAYER_LOG").is_ok() {
@@ -2257,12 +2292,16 @@ impl Root {
 pub(crate) enum ExternalOpen {
     /// 交给系统默认浏览器/协议处理程序的 URL。
     Url(&'static str),
-    /// 交给系统默认应用的本地文件；Linux 下裸路径进 `open_url` 会因 URI 解析失败而静默无操作。
-    File(PathBuf),
+    /// 交给系统默认应用的本地路径（文件或目录）；Linux 下裸路径进 `open_url` 会因 URI 解析失败而静默无操作。
+    Path(PathBuf),
 }
 
 fn config_open_target() -> ExternalOpen {
-    ExternalOpen::File(Settings::config_path())
+    ExternalOpen::Path(Settings::config_path())
+}
+
+fn log_directory_open_target() -> ExternalOpen {
+    ExternalOpen::Path(sodam_core::log_outlet::log_dir())
 }
 
 fn repository_open_target() -> ExternalOpen {
@@ -2273,7 +2312,7 @@ fn repository_open_target() -> ExternalOpen {
 fn apply_external_open(cx: &mut Context<Root>, target: ExternalOpen) {
     match target {
         ExternalOpen::Url(url) => cx.open_url(url),
-        ExternalOpen::File(path) => cx.open_with_system(&path),
+        ExternalOpen::Path(path) => cx.open_with_system(&path),
     }
 }
 
@@ -2477,10 +2516,11 @@ mod failure_text_tests {
 mod external_open_tests {
     use super::*;
 
-    /// 守住院落里最容易犯的回归：把配置文件当 URL 交给 `open_url`。
+    /// 守住院落里最容易犯的回归：把本地路径当 URL 交给 `open_url`。
     #[test]
-    fn config_entry_uses_file_semantics_and_repo_entry_uses_url() {
-        assert!(matches!(config_open_target(), ExternalOpen::File(_)));
+    fn config_and_log_entries_use_path_semantics_and_repo_entry_uses_url() {
+        assert!(matches!(config_open_target(), ExternalOpen::Path(_)));
+        assert!(matches!(log_directory_open_target(), ExternalOpen::Path(_)));
         assert!(matches!(repository_open_target(), ExternalOpen::Url(_)));
     }
 

@@ -9,6 +9,7 @@ pub mod config;
 pub mod contributors;
 pub mod failure;
 pub mod library;
+pub mod log_outlet;
 pub mod login;
 pub mod mem;
 pub mod models;
@@ -19,6 +20,7 @@ pub mod session;
 
 pub use audio::{PlaybackEngine, PlaybackSnapshot};
 pub use config::Settings;
+pub use log_outlet::LogOutlet;
 pub use models::{PlaylistItem, SceneItem, TrackItem};
 pub use play_report::PlayReporter;
 pub use queue::{PlayMode, Queue};

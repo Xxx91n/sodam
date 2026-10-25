@@ -717,6 +717,90 @@ mod tests {
         keys
     }
 
+    /// 从 `start`（开括号之后）按顶层逗号切分参数；字符串字面量整体跳过。
+    fn call_arguments(source: &str, start: usize) -> Option<Vec<&str>> {
+        let bytes = source.as_bytes();
+        let mut args = Vec::new();
+        let mut depth = 0usize;
+        let mut arg_start = start;
+        let mut i = start;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => {
+                    i += 1;
+                    while i < bytes.len() {
+                        match bytes[i] {
+                            b'\\' => i += 2,
+                            b'"' => {
+                                i += 1;
+                                break;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                    continue;
+                }
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' => {
+                    if depth == 0 {
+                        args.push(&source[arg_start..i]);
+                        return Some(args);
+                    }
+                    depth -= 1;
+                }
+                b']' | b'}' => depth = depth.saturating_sub(1),
+                b',' if depth == 0 => {
+                    args.push(&source[arg_start..i]);
+                    arg_start = i + 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// 取出 `needle`（如 `.failure_text(`）调用的第 `index` 个参数；只接受纯字符串字面量。
+    fn nth_argument_literal<'a>(source: &'a str, needle: &str, index: usize) -> Vec<&'a str> {
+        let mut keys = Vec::new();
+        let mut search = 0;
+        while let Some(found) = source[search..].find(needle) {
+            let after_needle = search + found + needle.len();
+            if let Some(arg) =
+                call_arguments(source, after_needle).and_then(|args| args.get(index).copied())
+            {
+                let arg = arg.trim();
+                let literal = arg
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                    .filter(|body| !body.chars().any(|c| matches!(c, '\\' | '"' | '\n' | '\r')));
+                if let Some(body) = literal {
+                    keys.push(body);
+                }
+            }
+            search = after_needle;
+        }
+        keys
+    }
+
+    /// `failure_text` 的第三个参数才是用户可见文案；常量参数不参与字典检查。
+    #[test]
+    fn failure_text_visible_literal_is_scanned() {
+        let source = r#"
+            let a = root.failure_text("上下文", &err, "可见文案");
+            let b = root.failure_text("上下文", &err, RETRY_TEXT);
+            let c = root.failure_text(
+                "多行上下文",
+                &err,
+                "多行可见文案",
+            );
+        "#;
+        assert_eq!(
+            nth_argument_literal(source, ".failure_text(", 2),
+            vec!["可见文案", "多行可见文案"]
+        );
+    }
+
     /// 英文界面的静态文案必须都能在词典里查到，否则会静默回退中文。
     #[test]
     fn every_static_ui_key_has_an_english_entry() {
@@ -734,12 +818,13 @@ mod tests {
             let Ok(source) = std::fs::read_to_string(&file) else {
                 continue;
             };
-            for needle in [".tr(", ".localized("] {
-                for key in literal_keys(&source, needle) {
-                    scanned += 1;
-                    if Language::english_text(key).is_none() && !CALL_SITE_ONLY.contains(&key) {
-                        missing.push(format!("{}: {key}", file.display()));
-                    }
+            let mut keys = literal_keys(&source, ".tr(");
+            keys.extend(literal_keys(&source, ".localized("));
+            keys.extend(nth_argument_literal(&source, ".failure_text(", 2));
+            for key in keys {
+                scanned += 1;
+                if Language::english_text(key).is_none() && !CALL_SITE_ONLY.contains(&key) {
+                    missing.push(format!("{}: {key}", file.display()));
                 }
             }
         }

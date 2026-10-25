@@ -14,14 +14,14 @@
 ## 目录
 
 ```text
-crates/sodam-core/       领域层：配置 / 会话 / 队列 / 音乐库 / 播放引擎（不依赖 GPUI）
+crates/sodam-core/src/   领域层：配置 / 会话 / 队列 / 音乐库 / 播放引擎（不依赖 GPUI）
   config.rs              配置读写 + 环境变量补全
   session.rs             配置 → libresoda Soda（Cookie、签名器、音质）
   library.rs             推荐、听歌模式、搜索、歌单、收藏、艺人/专辑数据
   models.rs              TrackItem / PlaylistItem / ArtistItem / AlbumItem / SceneItem
   queue.rs               播放队列与播放模式
   audio.rs               rodio 播放线程
-crates/sodam/            GPUI 应用
+crates/sodam/src/        GPUI 应用
   main.rs                入口、窗口、托盘启动
   app.rs                 Root 状态、输入法、渲染入口
   app_actions.rs         播放、队列、收藏、歌单、推荐、封面、设置动作
@@ -34,6 +34,7 @@ docs/ARCHITECTURE.md     架构与线程模型
 docs/ROADMAP.md          当前状态与剩余工作
 docs/UI-SPEC.md          UI 约束与主题规范
 packaging/arch/          Arch Linux PKGBUILD 与 desktop 文件
+packaging/windows/       Windows 安装器脚本与本机验收注意事项
 ```
 
 ## 硬性约定
@@ -60,7 +61,8 @@ packaging/arch/          Arch Linux PKGBUILD 与 desktop 文件
 1. 使用 `scripts/check.sh` / `scripts/build.sh` / `scripts/run.sh`；
 2. 编译时不运行 GUI，运行 GUI 时不编译；
 3. 大改后优先 `scripts/check.sh`，不要无护栏反复全量 release 编译；
-4. 卡顿时先看 `journalctl -k | grep -iE "drm|flip_done|oom"`。
+4. 卡顿时先看 `journalctl -k | grep -iE "drm|flip_done|oom"`；
+5. 明确禁止本地编译时，至少跑 `scripts/check.sh --fmt-only`，编译与测试交给远端 CI。
 
 ## 与 libresoda 的接口
 

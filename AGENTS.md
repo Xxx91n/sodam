@@ -14,14 +14,14 @@
 ## 目录
 
 ```text
-crates/sodam-core/       领域层：配置 / 会话 / 队列 / 音乐库 / 播放引擎（不依赖 GPUI）
+crates/sodam-core/src/   领域层：配置 / 会话 / 队列 / 音乐库 / 播放引擎（不依赖 GPUI）
   config.rs              配置读写 + 环境变量补全
   session.rs             配置 → libresoda Soda（Cookie、签名器、音质）
   library.rs             推荐、听歌模式、搜索、歌单、收藏、艺人/专辑数据
   models.rs              TrackItem / PlaylistItem / ArtistItem / AlbumItem / SceneItem
   queue.rs               播放队列与播放模式
   audio.rs               rodio 播放线程
-crates/sodam/            GPUI 应用
+crates/sodam/src/        GPUI 应用
   main.rs                入口、窗口、托盘启动
   app.rs                 Root 状态、输入法、渲染入口
   app_actions.rs         播放、队列、收藏、歌单、推荐、封面、设置动作

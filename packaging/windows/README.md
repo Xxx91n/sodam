@@ -36,3 +36,7 @@ Start-Process .\sodam-<版本>-windows-x64-setup.exe -Wait -PassThru `
 Select-String -Path "$env:LOCALAPPDATA\sodam\logs\sodam.log" `
   -Pattern 'cookie|authorization|x-helios|x-medusa|token' -CaseSensitive:$false
 ```
+
+- 构造「删除日志失败」时，用不共享 `DELETE` 的句柄锁住 `sodam.log`：
+  `[System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')`。
+  只读属性挡不住当前 Rust 的 `remove_file`（Windows 上会退化为 POSIX delete）。

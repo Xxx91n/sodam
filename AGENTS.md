@@ -34,6 +34,7 @@ docs/ARCHITECTURE.md     架构与线程模型
 docs/ROADMAP.md          当前状态与剩余工作
 docs/UI-SPEC.md          UI 约束与主题规范
 packaging/arch/          Arch Linux PKGBUILD 与 desktop 文件
+packaging/windows/       Windows 安装器脚本与本机验收注意事项
 ```
 
 ## 硬性约定

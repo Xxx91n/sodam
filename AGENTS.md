@@ -60,7 +60,8 @@ packaging/arch/          Arch Linux PKGBUILD 与 desktop 文件
 1. 使用 `scripts/check.sh` / `scripts/build.sh` / `scripts/run.sh`；
 2. 编译时不运行 GUI，运行 GUI 时不编译；
 3. 大改后优先 `scripts/check.sh`，不要无护栏反复全量 release 编译；
-4. 卡顿时先看 `journalctl -k | grep -iE "drm|flip_done|oom"`。
+4. 卡顿时先看 `journalctl -k | grep -iE "drm|flip_done|oom"`；
+5. 明确禁止本地编译时，至少跑 `scripts/check.sh --fmt-only`，编译与测试交给远端 CI。
 
 ## 与 libresoda 的接口
 

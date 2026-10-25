@@ -136,6 +136,19 @@ fn rotate_files(log_dir: &Path, max_old_files: usize) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 删除日志文件并保留第一个真实错误；文件本来就不存在不算失败。
+fn remove_log_file(path: &Path, first_error: &mut Option<std::io::Error>) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            if first_error.is_none() {
+                *first_error = Some(err);
+            }
+        }
+    }
+}
+
 enum OutletState {
     File { file: File, current_size: u64 },
     Memory { buffer: VecDeque<String> },
@@ -333,28 +346,38 @@ impl LogOutlet {
     }
 
     /// 清理所有日志文件（sodam.log 与所有轮转备份），供诊断清理功能使用。
+    ///
+    /// 删除失败或重建活跃文件失败都返回第一个 io error：只读目录、Windows 上被其他
+    /// 程序占用时，调用方不能把「没删掉」当成成功。个别文件失败不中断其余清理。
     pub fn clear_logs(&self) -> std::io::Result<()> {
         let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         *state = OutletState::Memory {
             buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
         };
         let active = self.log_dir.join(LOG_FILE_NAME);
-        if active.exists() {
-            let _ = fs::remove_file(&active);
-        }
+        let mut first_error = None;
+        remove_log_file(&active, &mut first_error);
         for i in 1..=self.max_old_files {
-            let old = self.log_dir.join(format!("{LOG_FILE_NAME}.{i}"));
-            if old.exists() {
-                let _ = fs::remove_file(&old);
+            remove_log_file(
+                &self.log_dir.join(format!("{LOG_FILE_NAME}.{i}")),
+                &mut first_error,
+            );
+        }
+        match OpenOptions::new().create(true).append(true).open(&active) {
+            Ok(file) => {
+                let current_size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
+                *state = OutletState::File { file, current_size };
+            }
+            Err(err) => {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
             }
         }
-        if let Ok(file) = OpenOptions::new().create(true).append(true).open(&active) {
-            *state = OutletState::File {
-                file,
-                current_size: 0,
-            };
+        match first_error {
+            Some(err) => Err(err),
+            None => Ok(()),
         }
-        Ok(())
     }
 }
 
@@ -551,6 +574,53 @@ mod tests {
         assert!(unrelated.exists(), "非日志文件不能被当成诊断日志删掉");
         assert!(audio.exists(), "音频缓存不受清除日志影响");
         assert!(cover.exists(), "封面缓存不受清除日志影响");
+    }
+
+    #[cfg(windows)]
+    fn lock_deletion(path: &Path) -> File {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x1;
+        const FILE_SHARE_WRITE: u32 = 0x2;
+        OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(path)
+            .unwrap()
+    }
+
+    #[test]
+    fn clear_logs_reports_error_when_log_file_cannot_be_removed() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let log_dir = temp.path().join("logs");
+        let outlet = LogOutlet::new(log_dir.clone());
+        outlet.write_line("entry-1");
+        let active = log_dir.join(LOG_FILE_NAME);
+        assert!(active.exists());
+
+        // Unix 用只读目录挡住 unlink；Windows 用不共享 DELETE 的句柄模拟文件被占用。
+        #[cfg(unix)]
+        {
+            fs::set_permissions(&log_dir, fs::Permissions::from_mode(0o555)).unwrap();
+            if fs::write(log_dir.join("probe"), b"x").is_ok() {
+                // root 不受权限位限制，构造不出删除失败。
+                fs::remove_file(log_dir.join("probe")).ok();
+                fs::set_permissions(&log_dir, fs::Permissions::from_mode(0o755)).unwrap();
+                return;
+            }
+        }
+        #[cfg(windows)]
+        let _lock = lock_deletion(&active);
+
+        let result = outlet.clear_logs();
+
+        #[cfg(unix)]
+        fs::set_permissions(&log_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(result.is_err(), "删除失败必须返回 Err，不能报成功");
+        assert!(active.exists(), "删除失败时原始日志必须还在盘上");
     }
 
     #[test]

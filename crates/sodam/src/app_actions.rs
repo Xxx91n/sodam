@@ -405,7 +405,11 @@ impl Root {
                 root.log_clearing = false;
                 match result {
                     Some(Err(err)) => {
-                        let message = root.failure_text("清除诊断日志失败", &err, RETRY_TEXT);
+                        let message = root.failure_text(
+                            "清除诊断日志失败",
+                            &err,
+                            "清除诊断日志失败，文件可能被其他程序占用",
+                        );
                         root.notify_error_once("log-clear-failed", message);
                     }
                     _ => {

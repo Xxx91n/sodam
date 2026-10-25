@@ -470,6 +470,9 @@ impl Language {
             "清除诊断日志" => "Clear Diagnostic Logs",
             "正在清除…" => "Clearing…",
             "已清除诊断日志" => "Diagnostic logs cleared",
+            "清除诊断日志失败，文件可能被其他程序占用" => {
+                "Couldn't clear diagnostic logs. Another program may be using the files."
+            }
             "音频输出长时间无响应，请重试播放" => "Audio output stopped responding. Try playing again.",
             "音频线程已退出，请重启应用" => "The audio worker stopped. Please restart the app.",
             "签名服务：{}" => "Signer: {}",

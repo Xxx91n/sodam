@@ -7,11 +7,10 @@ use crate::ui::theme::{self, ThemeKind};
 use gpui::prelude::*;
 use gpui::{Context, Window};
 use sodam_core::audio::PlaybackSnapshot;
-use sodam_core::failure::{
-    jitter_from_elapsed, PlayBudget, PlaybackFailure, RecoveryAction, Retryability, Stage,
-};
+use sodam_core::failure::{PlayBudget, PlaybackFailure, RecoveryAction, Retryability, Stage};
 use sodam_core::library::RecommendationSource;
 use sodam_core::models::{PlaylistItem, SceneItem, TrackItem};
+use sodam_core::playback_trace::{drive_play_attempt, PlaybackTrace};
 use sodam_core::session::Session;
 use sodam_core::Settings;
 use std::collections::HashSet;
@@ -2197,9 +2196,6 @@ impl Root {
             cx.notify();
             return;
         };
-        if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-            eprintln!("[player] 开始装载：{}（id={}）", track.title, track.id);
-        }
         // 走到这里就是一次被明确要求（或被允许）的播放尝试：闸门若开着，说明是用户
         // 按了播放/切歌，熔断回半开。自动续播路径在巡检处已被闸门拦住。
         self.release_playback_halt();
@@ -2225,26 +2221,16 @@ impl Root {
         // 总墙钟上限，否则等于把刚拆掉的「整首下载总时限」从另一侧装回来。
         let work = cx.background_spawn(async move {
             let session = Session::new(settings);
-            let budget = PlayBudget::default();
-            let started = std::time::Instant::now();
-            let log = std::env::var("SODAM_PLAYER_LOG").is_ok();
-            let mut attempt = 0u8;
-            loop {
-                attempt += 1;
-                match session.download_to_cache(&work_track) {
-                    Ok(cached) => return Ok(cached),
-                    Err(failure) => {
-                        if log {
-                            eprintln!("[player] 第 {attempt} 次装载失败：{failure}");
-                        }
-                        let jitter = jitter_from_elapsed(started.elapsed());
-                        match budget.next_delay(attempt, &failure, jitter) {
-                            Some(delay) => std::thread::sleep(delay),
-                            None => return Err(failure),
-                        }
-                    }
-                }
-            }
+            // 轨迹写在后台线程：开始 / 每次失败判定 / 最终成功或放弃各一行。
+            // 永久失败只留一次尝试的记录，不会因为预算再打一次远程。
+            let trace = PlaybackTrace::global(&work_track.id);
+            drive_play_attempt(
+                PlayBudget::default(),
+                trace.as_ref(),
+                std::time::Instant::now(),
+                |_| session.download_to_cache(&work_track),
+                std::thread::sleep,
+            )
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -2264,9 +2250,6 @@ impl Root {
                         let sequence = root.engine.load(track.clone(), cached);
                         root.pending_engine_load = Some(sequence);
                         root.progress_token = Some(sequence);
-                        if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-                            eprintln!("[player] 装载完成：{}", track.title);
-                        }
                         root.playback_error = None;
                         // 记录真实播放历史（去重最近一条，避免重复刷屏）
                         if root.played_history.last().map(String::as_str) != Some(track.id.as_str())

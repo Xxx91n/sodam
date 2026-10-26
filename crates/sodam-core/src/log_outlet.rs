@@ -15,7 +15,10 @@ use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
+use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 pub const DEFAULT_MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
@@ -802,14 +805,242 @@ enum OutletState {
     Memory { buffer: VecDeque<String> },
 }
 
-/// 诊断日志出口。
-pub struct LogOutlet {
+/// 写盘线程独占的状态：折叠缓冲与文件句柄都只在写盘线程里读写。
+///
+/// 调用方（含渲染线程与播放链路）只做脱敏并投递到通道，不再触碰文件 IO。
+/// 每行 `flush()` 且全程持锁的写法放在播放路径上，就是让渲染线程做同步文件 IO。
+struct WriterState {
     log_dir: PathBuf,
     max_file_size: u64,
     max_old_files: usize,
-    min_level: Mutex<LogLevel>,
-    pending: Mutex<Option<PendingRecord>>,
-    inner: Mutex<OutletState>,
+    pending: Option<PendingRecord>,
+    inner: OutletState,
+}
+
+impl WriterState {
+    fn new(log_dir: PathBuf, max_file_size: u64, max_old_files: usize) -> Self {
+        let mut state = Self {
+            log_dir,
+            max_file_size,
+            max_old_files,
+            pending: None,
+            inner: OutletState::Memory {
+                buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
+            },
+        };
+
+        if fs::create_dir_all(&state.log_dir).is_err() {
+            return state;
+        }
+
+        let active = state.log_dir.join(LOG_FILE_NAME);
+        let existing_size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
+        if existing_size >= max_file_size && rotate_files(&state.log_dir, max_old_files).is_err() {
+            return state;
+        }
+
+        if let Ok(file) = OpenOptions::new().create(true).append(true).open(&active) {
+            let size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
+            state.inner = OutletState::File {
+                file,
+                current_size: size,
+            };
+        }
+        state
+    }
+
+    fn is_degraded(&self) -> bool {
+        matches!(self.inner, OutletState::Memory { .. })
+    }
+
+    fn memory_records(&mut self) -> Vec<String> {
+        self.flush();
+        match &self.inner {
+            OutletState::Memory { buffer } => buffer.iter().cloned().collect(),
+            OutletState::File { .. } => Vec::new(),
+        }
+    }
+
+    fn flush(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            self.write_physical_line(pending.into_output_line());
+        }
+    }
+
+    fn write_line(&mut self, sanitized: String) {
+        let key = extract_line_key(&sanitized);
+        if let Some(pending) = self.pending.as_mut() {
+            if pending.key == key {
+                pending.count += 1;
+                return;
+            }
+        }
+        let old = self.pending.replace(PendingRecord {
+            key,
+            line: sanitized,
+            count: 1,
+        });
+        if let Some(old) = old {
+            self.write_physical_line(old.into_output_line());
+        }
+    }
+
+    fn write_physical_line(&mut self, line: String) {
+        // 内存降级自愈检测
+        if let OutletState::Memory { buffer } = &mut self.inner {
+            let active = self.log_dir.join(LOG_FILE_NAME);
+            if fs::create_dir_all(&self.log_dir).is_ok() {
+                if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&active) {
+                    let mut current_size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
+                    let mut write_failed = false;
+                    while let Some(front) = buffer.front() {
+                        let add = front.len() as u64 + 1;
+                        if file.write_all(front.as_bytes()).is_ok() && file.write_all(b"\n").is_ok()
+                        {
+                            current_size += add;
+                            buffer.pop_front();
+                        } else {
+                            write_failed = true;
+                            break;
+                        }
+                    }
+                    if !write_failed && file.flush().is_ok() {
+                        self.inner = OutletState::File { file, current_size };
+                    }
+                }
+            }
+        }
+
+        let add_len = line.len() as u64 + 1;
+
+        let need_rotate = match &self.inner {
+            OutletState::File { current_size, .. } => {
+                *current_size + add_len > self.max_file_size && *current_size > 0
+            }
+            OutletState::Memory { .. } => false,
+        };
+
+        if need_rotate {
+            self.inner = OutletState::Memory {
+                buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
+            };
+
+            if rotate_files(&self.log_dir, self.max_old_files).is_ok() {
+                let active = self.log_dir.join(LOG_FILE_NAME);
+                if let Ok(file) = OpenOptions::new().create(true).append(true).open(&active) {
+                    self.inner = OutletState::File {
+                        file,
+                        current_size: 0,
+                    };
+                }
+            }
+        }
+
+        match &mut self.inner {
+            OutletState::File { file, current_size } => {
+                let mut ok = false;
+                if file.write_all(line.as_bytes()).is_ok()
+                    && file.write_all(b"\n").is_ok()
+                    && file.flush().is_ok()
+                {
+                    *current_size += add_len;
+                    ok = true;
+                }
+                if !ok {
+                    let mut buffer = VecDeque::with_capacity(MEMORY_BUFFER_LIMIT);
+                    buffer.push_back(line);
+                    self.inner = OutletState::Memory { buffer };
+                }
+            }
+            OutletState::Memory { buffer } => {
+                if buffer.len() >= MEMORY_BUFFER_LIMIT {
+                    buffer.pop_front();
+                }
+                buffer.push_back(line);
+            }
+        }
+    }
+
+    fn clear(&mut self) -> std::io::Result<()> {
+        self.pending = None;
+        self.inner = OutletState::Memory {
+            buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
+        };
+        let active = self.log_dir.join(LOG_FILE_NAME);
+        let mut first_error = None;
+        remove_log_file(&active, &mut first_error);
+        for i in 1..=self.max_old_files {
+            remove_log_file(
+                &self.log_dir.join(format!("{LOG_FILE_NAME}.{i}")),
+                &mut first_error,
+            );
+        }
+        match OpenOptions::new().create(true).append(true).open(&active) {
+            Ok(file) => {
+                let current_size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
+                self.inner = OutletState::File { file, current_size };
+            }
+            Err(err) => {
+                if first_error.is_none() {
+                    first_error = Some(err);
+                }
+            }
+        }
+        match first_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+}
+
+enum WriterMsg {
+    Line(String),
+    Flush(Sender<()>),
+    Snapshot(Sender<WriterSnapshot>),
+    Clear(Sender<std::io::Result<()>>),
+    Shutdown,
+}
+
+struct WriterSnapshot {
+    degraded: bool,
+    records: Vec<String>,
+}
+
+fn writer_loop(rx: Receiver<WriterMsg>, mut state: WriterState) {
+    while let Ok(msg) = rx.recv() {
+        match msg {
+            WriterMsg::Line(line) => state.write_line(line),
+            WriterMsg::Flush(ack) => {
+                state.flush();
+                let _ = ack.send(());
+            }
+            WriterMsg::Snapshot(ack) => {
+                // 先 flush：内存降级可能因为目录恢复可写而自愈，degraded 要反映刷完后的状态。
+                let records = state.memory_records();
+                let degraded = state.is_degraded();
+                let _ = ack.send(WriterSnapshot { degraded, records });
+            }
+            WriterMsg::Clear(ack) => {
+                let result = state.clear();
+                let _ = ack.send(result);
+            }
+            WriterMsg::Shutdown => {
+                state.flush();
+                break;
+            }
+        }
+    }
+    state.flush();
+}
+
+/// 诊断日志出口。
+///
+/// 所有写盘动作都落在专用线程；这里的公开方法只做脱敏、投递与（需要时）等待确认。
+pub struct LogOutlet {
+    log_dir: PathBuf,
+    level: AtomicU8,
+    tx: Mutex<Option<Sender<WriterMsg>>>,
+    writer: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl LogOutlet {
@@ -820,61 +1051,23 @@ impl LogOutlet {
 
     /// 以指定单文件大小与保留份数创建日志出口。
     pub fn new_with_limits(log_dir: PathBuf, max_file_size: u64, max_old_files: usize) -> Self {
-        if fs::create_dir_all(&log_dir).is_err() {
-            return Self {
+        let state = WriterState::new(log_dir.clone(), max_file_size, max_old_files);
+        let (tx, rx) = mpsc::channel();
+        match std::thread::Builder::new()
+            .name("sodam-log-writer".to_string())
+            .spawn(move || writer_loop(rx, state))
+        {
+            Ok(handle) => Self {
                 log_dir,
-                max_file_size,
-                max_old_files,
-                min_level: Mutex::new(LogLevel::Info),
-                pending: Mutex::new(None),
-                inner: Mutex::new(OutletState::Memory {
-                    buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
-                }),
-            };
-        }
-
-        let active = log_dir.join(LOG_FILE_NAME);
-        let existing_size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
-
-        if existing_size >= max_file_size && rotate_files(&log_dir, max_old_files).is_err() {
-            return Self {
-                log_dir,
-                max_file_size,
-                max_old_files,
-                min_level: Mutex::new(LogLevel::Info),
-                pending: Mutex::new(None),
-                inner: Mutex::new(OutletState::Memory {
-                    buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
-                }),
-            };
-        }
-
-        let open_res = OpenOptions::new().create(true).append(true).open(&active);
-
-        match open_res {
-            Ok(file) => {
-                let size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
-                Self {
-                    log_dir,
-                    max_file_size,
-                    max_old_files,
-                    min_level: Mutex::new(LogLevel::Info),
-                    pending: Mutex::new(None),
-                    inner: Mutex::new(OutletState::File {
-                        file,
-                        current_size: size,
-                    }),
-                }
-            }
+                level: AtomicU8::new(LogLevel::Info as u8),
+                tx: Mutex::new(Some(tx)),
+                writer: Mutex::new(Some(handle)),
+            },
             Err(_) => Self {
                 log_dir,
-                max_file_size,
-                max_old_files,
-                min_level: Mutex::new(LogLevel::Info),
-                pending: Mutex::new(None),
-                inner: Mutex::new(OutletState::Memory {
-                    buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
-                }),
+                level: AtomicU8::new(LogLevel::Info as u8),
+                tx: Mutex::new(None),
+                writer: Mutex::new(None),
             },
         }
     }
@@ -887,40 +1080,66 @@ impl LogOutlet {
         self.log_dir.join(LOG_FILE_NAME)
     }
 
+    fn send_line(&self, line: String) {
+        let guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(tx) = guard.as_ref() {
+            let _ = tx.send(WriterMsg::Line(line));
+        }
+    }
+
+    fn send_snapshot_request(&self) -> Option<Receiver<WriterSnapshot>> {
+        let (ack_tx, ack_rx) = mpsc::channel();
+        let guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
+        let tx = guard.as_ref()?;
+        tx.send(WriterMsg::Snapshot(ack_tx)).ok()?;
+        Some(ack_rx)
+    }
+
     pub fn is_degraded(&self) -> bool {
-        let state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        matches!(*state, OutletState::Memory { .. })
+        let Some(ack) = self.send_snapshot_request() else {
+            return true;
+        };
+        ack.recv().map(|snapshot| snapshot.degraded).unwrap_or(true)
     }
 
     pub fn memory_records(&self) -> Vec<String> {
-        self.flush();
-        let state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        match &*state {
-            OutletState::Memory { buffer } => buffer.iter().cloned().collect(),
-            OutletState::File { .. } => Vec::new(),
-        }
+        let Some(ack) = self.send_snapshot_request() else {
+            return Vec::new();
+        };
+        ack.recv()
+            .map(|snapshot| snapshot.records)
+            .unwrap_or_default()
     }
 
     /// 设置日志过滤级别；不提供完全关闭日志的选项，最高限制至 ERROR 级。
     pub fn set_level(&self, level: LogLevel) {
-        let mut guard = self.min_level.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = level;
+        self.level.store(level as u8, Ordering::Relaxed);
     }
 
     /// 获取当前生效的最低日志级别。
     pub fn level(&self) -> LogLevel {
-        *self.min_level.lock().unwrap_or_else(|e| e.into_inner())
+        match self.level.load(Ordering::Relaxed) {
+            value if value == LogLevel::Debug as u8 => LogLevel::Debug,
+            value if value == LogLevel::Warn as u8 => LogLevel::Warn,
+            value if value == LogLevel::Error as u8 => LogLevel::Error,
+            _ => LogLevel::Info,
+        }
     }
 
-    /// 刷新待写盘的折叠缓冲区。
+    /// 刷新待写盘的折叠缓冲区；返回时此前投递的行都已落到文件（或内存降级缓冲）。
     pub fn flush(&self) {
-        let pending_opt = {
-            let mut pending_guard = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            pending_guard.take()
+        let ack = {
+            let (ack_tx, ack_rx) = mpsc::channel();
+            let guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(tx) = guard.as_ref() else {
+                return;
+            };
+            if tx.send(WriterMsg::Flush(ack_tx)).is_err() {
+                return;
+            }
+            ack_rx
         };
-        if let Some(pending) = pending_opt {
-            self.write_physical_line(pending.into_output_line());
-        }
+        let _ = ack.recv();
     }
 
     /// 记录结构化诊断记录。
@@ -972,107 +1191,8 @@ impl LogOutlet {
         // 3. user_id 在非 DEBUG 级别不写入
         let sanitized = scrub_user_id_if_not_debug(&sanitized);
 
-        // 4. 重复行折叠检测
-        let key = extract_line_key(&sanitized);
-
-        let old_to_flush = {
-            let mut pending_guard = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(pending) = pending_guard.as_mut() {
-                if pending.key == key {
-                    pending.count += 1;
-                    return;
-                }
-            }
-            let old = pending_guard.take();
-            *pending_guard = Some(PendingRecord {
-                key,
-                line: sanitized,
-                count: 1,
-            });
-            old
-        };
-
-        if let Some(old) = old_to_flush {
-            self.write_physical_line(old.into_output_line());
-        }
-    }
-
-    fn write_physical_line(&self, line: String) {
-        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-
-        // 内存降级自愈检测
-        if let OutletState::Memory { buffer } = &mut *state {
-            let active = self.log_dir.join(LOG_FILE_NAME);
-            if fs::create_dir_all(&self.log_dir).is_ok() {
-                if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&active) {
-                    let mut current_size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
-                    let mut write_failed = false;
-                    while let Some(front) = buffer.front() {
-                        let add = front.len() as u64 + 1;
-                        if file.write_all(front.as_bytes()).is_ok() && file.write_all(b"\n").is_ok()
-                        {
-                            current_size += add;
-                            buffer.pop_front();
-                        } else {
-                            write_failed = true;
-                            break;
-                        }
-                    }
-                    if !write_failed && file.flush().is_ok() {
-                        *state = OutletState::File { file, current_size };
-                    }
-                }
-            }
-        }
-
-        let add_len = line.len() as u64 + 1;
-
-        let need_rotate = match &*state {
-            OutletState::File { current_size, .. } => {
-                *current_size + add_len > self.max_file_size && *current_size > 0
-            }
-            OutletState::Memory { .. } => false,
-        };
-
-        if need_rotate {
-            *state = OutletState::Memory {
-                buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
-            };
-
-            if rotate_files(&self.log_dir, self.max_old_files).is_ok() {
-                let active = self.log_dir.join(LOG_FILE_NAME);
-                if let Ok(file) = OpenOptions::new().create(true).append(true).open(&active) {
-                    *state = OutletState::File {
-                        file,
-                        current_size: 0,
-                    };
-                }
-            }
-        }
-
-        match &mut *state {
-            OutletState::File { file, current_size } => {
-                let mut ok = false;
-                if file.write_all(line.as_bytes()).is_ok()
-                    && file.write_all(b"\n").is_ok()
-                    && file.flush().is_ok()
-                {
-                    *current_size += add_len;
-                    ok = true;
-                }
-                if !ok {
-                    let mut buffer = VecDeque::with_capacity(MEMORY_BUFFER_LIMIT);
-                    buffer.push_back(line);
-                    *state = OutletState::Memory { buffer };
-                }
-            }
-            OutletState::Memory { buffer } => {
-                if buffer.len() >= MEMORY_BUFFER_LIMIT {
-                    buffer.pop_front();
-                }
-                buffer.push_back(line);
-            }
-        }
+        // 4. 投递给写盘线程：重复行折叠与文件 IO 都在那边完成
+        self.send_line(sanitized);
     }
 
     /// 记录应用启动第一行诊断记录。
@@ -1090,44 +1210,41 @@ impl LogOutlet {
     /// 删除失败或重建活跃文件失败都返回第一个 io error：只读目录、Windows 上被其他
     /// 程序占用时，调用方不能把「没删掉」当成成功。个别文件失败不中断其余清理。
     pub fn clear_logs(&self) -> std::io::Result<()> {
+        let (ack_tx, ack_rx) = mpsc::channel();
         {
-            let mut pending_guard = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            *pending_guard = None;
-        }
-        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        *state = OutletState::Memory {
-            buffer: VecDeque::with_capacity(MEMORY_BUFFER_LIMIT),
-        };
-        let active = self.log_dir.join(LOG_FILE_NAME);
-        let mut first_error = None;
-        remove_log_file(&active, &mut first_error);
-        for i in 1..=self.max_old_files {
-            remove_log_file(
-                &self.log_dir.join(format!("{LOG_FILE_NAME}.{i}")),
-                &mut first_error,
-            );
-        }
-        match OpenOptions::new().create(true).append(true).open(&active) {
-            Ok(file) => {
-                let current_size = fs::metadata(&active).map(|m| m.len()).unwrap_or(0);
-                *state = OutletState::File { file, current_size };
-            }
-            Err(err) => {
-                if first_error.is_none() {
-                    first_error = Some(err);
-                }
+            let guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(tx) = guard.as_ref() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "diagnostic log writer is not running",
+                ));
+            };
+            if tx.send(WriterMsg::Clear(ack_tx)).is_err() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "diagnostic log writer is not running",
+                ));
             }
         }
-        match first_error {
-            Some(err) => Err(err),
-            None => Ok(()),
-        }
+        ack_rx.recv().unwrap_or_else(|_| {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "diagnostic log writer stopped before clearing",
+            ))
+        })
     }
 }
 
 impl Drop for LogOutlet {
     fn drop(&mut self) {
-        self.flush();
+        let sender = self.tx.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(tx) = sender {
+            let _ = tx.send(WriterMsg::Shutdown);
+        }
+        let writer = self.writer.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(handle) = writer {
+            let _ = handle.join();
+        }
     }
 }
 

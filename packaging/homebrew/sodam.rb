@@ -1,6 +1,7 @@
 cask "sodam" do
-  version "0.3.5"
-  sha256 "e8e297c6f21bc1dd024a6c88aa12857321c0fd1cda85c09692de472f4207fe52"
+  version "0.3.6"
+  # 发版产物生成后由 packaging/homebrew/sync-tap.sh 自动填入。
+  sha256 :no_check
 
   url "https://github.com/sodahub-org/sodam/releases/download/v#{version}/sodam-#{version}-macos-aarch64.zip"
   name "SodaM"

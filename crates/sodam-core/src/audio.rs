@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
+use crate::log_outlet::{log_event, LogLevel, LogTopic};
 use crate::models::TrackItem;
 use crate::session::CachedTrack;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -148,8 +149,14 @@ impl PlaybackEngine {
             .name("sodam-audio".to_string())
             .spawn(move || audio_thread(rx, state, open_output, probe));
         if let Err(err) = spawned {
+            let detail = err.to_string();
+            log_event(
+                LogLevel::Error,
+                LogTopic::Audio,
+                "thread_spawn_failed",
+                &[("detail", detail.as_str())],
+            );
             if let Ok(mut snap) = snapshot.lock() {
-                eprintln!("[failure] 音频线程启动失败: {err}");
                 snap.error = "音频播放没能启动，请重启应用。".to_string();
             }
         }
@@ -250,10 +257,16 @@ fn set_error(state: &Arc<Mutex<PlaybackSnapshot>>, message: String) {
     }
 }
 
-/// 引擎侧的技术原文只进日志（`eprintln`，日志出口落地后写文件），
+/// 引擎侧的技术原文只进日志（`audio` 话题），
 /// 界面拿到的 `message` 必须是不带驱动/解码器术语的一句人话。
 fn log_engine_failure(context: &str, detail: impl std::fmt::Display) {
-    eprintln!("[failure] {context}: {detail}");
+    let detail = detail.to_string();
+    log_event(
+        LogLevel::Warn,
+        LogTopic::Audio,
+        "engine_failure",
+        &[("context", context), ("detail", detail.as_str())],
+    );
 }
 
 fn initial_volume(saved: f32, override_value: Option<&str>) -> f32 {
@@ -361,7 +374,13 @@ fn rebuild_player_at(
 fn open_output(errors: OutputErrors) -> OutputResult {
     rodio::DeviceSinkBuilder::from_default_device()?
         .with_error_callback(move |err| {
-            eprintln!("[failure] 音频设备连接中断: {err}");
+            let detail = err.to_string();
+            log_event(
+                LogLevel::Warn,
+                LogTopic::Audio,
+                "device_lost",
+                &[("detail", detail.as_str())],
+            );
             if let Ok(mut errors) = errors.lock() {
                 *errors = Some("音频输出中断了。".to_string());
             }

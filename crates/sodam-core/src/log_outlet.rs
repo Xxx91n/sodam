@@ -1,12 +1,13 @@
 //! 诊断日志出口：本机日志目录解析、按大小轮转、保留份数与内存降级。
 //!
-//! 设计规则（见 Issue #57 / #58 / #53）：
+//! 设计规则（见 Issue #57 / #58 / #61 / #53）：
 //! - 目录在用户数据目录，默认开启（INFO 级）；
 //! - 单文件 5 MB 轮转，最多保留 5 份旧文件；
 //! - 目录不可写时不 panic、不阻塞，只在内存中降级缓冲；
 //! - 行格式为 `<时间> <级别> <话题> <事件> key=value …`，字段顺序固定，便于 grep；
 //! - 级别仅 ERROR / WARN / INFO / DEBUG；时间戳带本地时区偏移；
 //! - 首版六个话题：player / prefetch / audio / report / media / app；
+//! - 旧的环境变量开关（`SODAM_*_LOG`）只决定「写到多细」，把所属话题提到 DEBUG；
 //! - 写盘前切断 URL 查询串，抹去 Cookie、Authorization、x-helios、x-medusa 与签名 token；
 //! - 账号 user_id 在 Info 级不写，只在 Debug 级写；
 //! - 连续重复的行折叠并附计数，避免错误风暴把日志撑爆。
@@ -25,6 +26,23 @@ pub const DEFAULT_MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
 pub const DEFAULT_MAX_OLD_FILES: usize = 5;
 pub const LOG_FILE_NAME: &str = "sodam.log";
 pub const MEMORY_BUFFER_LIMIT: usize = 500;
+
+/// 话题级覆盖的「未设置」哨兵：`LogLevel` 从 1 开始，0 不会与任何级别冲突。
+const NO_TOPIC_OVERRIDE: u8 = 0;
+
+/// 旧的环境变量开关，现在的语义是「把所属话题提到 DEBUG」（默认 INFO）。
+///
+/// 粒度是话题而不是事件：`scene / theme / cover / frame` 都归 `app`，
+/// 设其中任意一个，该话题的 DEBUG 行就都会记下来。
+pub const TOPIC_VERBOSITY_ENV: [(&str, LogTopic); 7] = [
+    ("SODAM_PLAYER_LOG", LogTopic::Player),
+    ("SODAM_PREFETCH_LOG", LogTopic::Prefetch),
+    ("SODAM_REPORT_LOG", LogTopic::Report),
+    ("SODAM_SCENE_LOG", LogTopic::App),
+    ("SODAM_THEME_LOG", LogTopic::App),
+    ("SODAM_COVER_LOG", LogTopic::App),
+    ("SODAM_FRAME_LOG", LogTopic::App),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
@@ -85,6 +103,16 @@ impl std::str::FromStr for LogLevel {
     }
 }
 
+/// 把 `AtomicU8` 里的原始值还原成级别；未知值安全回落到 INFO。
+fn level_from_u8(value: u8) -> LogLevel {
+    match value {
+        value if value == LogLevel::Warn as u8 => LogLevel::Warn,
+        value if value == LogLevel::Error as u8 => LogLevel::Error,
+        value if value == LogLevel::Debug as u8 => LogLevel::Debug,
+        _ => LogLevel::Info,
+    }
+}
+
 /// 诊断日志首版六个话题。
 ///
 /// 约束规则（见 Issue #58）：
@@ -119,6 +147,18 @@ impl LogTopic {
             Self::Report => "report",
             Self::Media => "media",
             Self::App => "app",
+        }
+    }
+
+    /// 在 `ALL` 里的下标，也是话题级过滤器的数组下标。
+    pub const fn index(&self) -> usize {
+        match self {
+            Self::Player => 0,
+            Self::Prefetch => 1,
+            Self::Audio => 2,
+            Self::Report => 3,
+            Self::Media => 4,
+            Self::App => 5,
         }
     }
 }
@@ -1039,6 +1079,8 @@ fn writer_loop(rx: Receiver<WriterMsg>, mut state: WriterState) {
 pub struct LogOutlet {
     log_dir: PathBuf,
     level: AtomicU8,
+    /// 每个话题的详细度覆盖；`NO_TOPIC_OVERRIDE` 表示跟随全局 `level`。
+    topic_levels: [AtomicU8; LogTopic::ALL.len()],
     tx: Mutex<Option<Sender<WriterMsg>>>,
     writer: Mutex<Option<JoinHandle<()>>>,
 }
@@ -1060,12 +1102,14 @@ impl LogOutlet {
             Ok(handle) => Self {
                 log_dir,
                 level: AtomicU8::new(LogLevel::Info as u8),
+                topic_levels: std::array::from_fn(|_| AtomicU8::new(NO_TOPIC_OVERRIDE)),
                 tx: Mutex::new(Some(tx)),
                 writer: Mutex::new(Some(handle)),
             },
             Err(_) => Self {
                 log_dir,
                 level: AtomicU8::new(LogLevel::Info as u8),
+                topic_levels: std::array::from_fn(|_| AtomicU8::new(NO_TOPIC_OVERRIDE)),
                 tx: Mutex::new(None),
                 writer: Mutex::new(None),
             },
@@ -1111,18 +1155,31 @@ impl LogOutlet {
             .unwrap_or_default()
     }
 
-    /// 设置日志过滤级别；不提供完全关闭日志的选项，最高限制至 ERROR 级。
+    /// 设置全局过滤级别；不提供完全关闭日志的选项，最高限制至 ERROR 级。
     pub fn set_level(&self, level: LogLevel) {
         self.level.store(level as u8, Ordering::Relaxed);
     }
 
-    /// 获取当前生效的最低日志级别。
+    /// 获取当前生效的全局最低级别。
     pub fn level(&self) -> LogLevel {
-        match self.level.load(Ordering::Relaxed) {
-            value if value == LogLevel::Debug as u8 => LogLevel::Debug,
-            value if value == LogLevel::Warn as u8 => LogLevel::Warn,
-            value if value == LogLevel::Error as u8 => LogLevel::Error,
-            _ => LogLevel::Info,
+        level_from_u8(self.level.load(Ordering::Relaxed))
+    }
+
+    /// 设置某个话题的过滤级别。
+    ///
+    /// 话题覆盖只能比全局更细（记更多），不会比全局更粗：环境变量只用来「多记」，
+    /// 不用来「少记」，因此这里不会让某话题比默认更安静。
+    pub fn set_topic_level(&self, topic: LogTopic, level: LogLevel) {
+        self.topic_levels[topic.index()].store(level as u8, Ordering::Relaxed);
+    }
+
+    /// 某个话题实际生效的最低级别。
+    pub fn topic_level(&self, topic: LogTopic) -> LogLevel {
+        let raw = self.topic_levels[topic.index()].load(Ordering::Relaxed);
+        if raw == NO_TOPIC_OVERRIDE {
+            self.level()
+        } else {
+            self.level().min(level_from_u8(raw))
         }
     }
 
@@ -1142,9 +1199,26 @@ impl LogOutlet {
         let _ = ack.recv();
     }
 
+    /// 该话题的该级别是否会真的写出：调用方可以据此跳过昂贵的字段构造。
+    pub fn enabled(&self, level: LogLevel, topic: LogTopic) -> bool {
+        level >= self.topic_level(topic)
+    }
+
+    /// 让旧的环境变量生效：变量存在且不是 `0`，就把对应话题提到 DEBUG。
+    ///
+    /// 启动时由 [`init_with_dir`] 自动调用；测试里可以单独调用。
+    pub fn apply_env_verbosity(&self) {
+        for (name, topic) in TOPIC_VERBOSITY_ENV {
+            let value = std::env::var(name).unwrap_or_default();
+            if !value.trim().is_empty() && value.trim() != "0" {
+                self.set_topic_level(topic, LogLevel::Debug);
+            }
+        }
+    }
+
     /// 记录结构化诊断记录。
     pub fn record(&self, record: &LogRecord<'_>) {
-        if record.level < self.level() {
+        if !self.enabled(record.level, record.topic) {
             return;
         }
         let duration = record
@@ -1159,7 +1233,7 @@ impl LogOutlet {
 
     /// 便捷记录结构化日志。
     pub fn log(&self, level: LogLevel, topic: LogTopic, event: &str, fields: &[(&str, &str)]) {
-        if level < self.level() {
+        if !self.enabled(level, topic) {
             return;
         }
         let mut record = LogRecord::new(level, topic, event);
@@ -1271,6 +1345,7 @@ pub fn init_with_dir(dir: PathBuf) -> &'static LogOutlet {
     ensure_panic_hook_registered();
     GLOBAL_OUTLET.get_or_init(|| {
         let outlet = LogOutlet::new(dir);
+        outlet.apply_env_verbosity();
         outlet.record_startup();
         outlet
     })
@@ -1293,6 +1368,13 @@ pub fn log_event(level: LogLevel, topic: LogTopic, event: &str, fields: &[(&str,
     if let Some(outlet) = global() {
         outlet.log(level, topic, event, fields);
     }
+}
+
+/// 全局判断该话题的该级别是否会写出；未初始化时一律为否。
+///
+/// 昂贵的字段构造（格式化、序列化）应该先问这里，避免关着还付构造成本。
+pub fn enabled(level: LogLevel, topic: LogTopic) -> bool {
+    global().is_some_and(|outlet| outlet.enabled(level, topic))
 }
 
 #[cfg(test)]
@@ -1638,6 +1720,63 @@ mod tests {
         assert!("network".parse::<LogTopic>().is_err());
         assert!("ui".parse::<LogTopic>().is_err());
         assert!("custom_topic".parse::<LogTopic>().is_err());
+
+        for (index, topic) in LogTopic::ALL.iter().enumerate() {
+            assert_eq!(topic.index(), index, "话题下标必须与 ALL 顺序一致：{topic}");
+        }
+    }
+
+    #[test]
+    fn test_topic_override_only_raises_verbosity() {
+        let temp = tempfile::tempdir().unwrap();
+        let outlet = LogOutlet::new(temp.path().to_path_buf());
+
+        // 默认全局 INFO：DEBUG 不记。
+        assert!(!outlet.enabled(LogLevel::Debug, LogTopic::Player));
+
+        // 话题覆盖把 player 提到 DEBUG，其他话题不受影响。
+        outlet.set_topic_level(LogTopic::Player, LogLevel::Debug);
+        assert_eq!(outlet.topic_level(LogTopic::Player), LogLevel::Debug);
+        assert!(outlet.enabled(LogLevel::Debug, LogTopic::Player));
+        assert!(!outlet.enabled(LogLevel::Debug, LogTopic::App));
+
+        // 覆盖只能更细，不能把话题调得比全局更安静。
+        outlet.set_topic_level(LogTopic::Audio, LogLevel::Error);
+        assert_eq!(outlet.topic_level(LogTopic::Audio), LogLevel::Info);
+
+        outlet.log(LogLevel::Debug, LogTopic::Player, "player_debug", &[]);
+        outlet.log(LogLevel::Debug, LogTopic::App, "app_debug", &[]);
+        outlet.flush();
+
+        let content = fs::read_to_string(outlet.log_file_path()).unwrap();
+        assert!(content.contains("DEBUG player player_debug"));
+        assert!(!content.contains("app_debug"));
+    }
+
+    #[test]
+    fn test_env_verbosity_maps_flags_to_topics() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // 先把所有相关变量清空并记下原值，避免本机环境影响断言。
+        let mut guards = Vec::new();
+        for (name, _) in TOPIC_VERBOSITY_ENV {
+            let orig = std::env::var_os(name);
+            std::env::remove_var(name);
+            guards.push(EnvGuard(name, orig));
+        }
+        std::env::set_var("SODAM_PLAYER_LOG", "1");
+        std::env::set_var("SODAM_FRAME_LOG", "1");
+        std::env::set_var("SODAM_PREFETCH_LOG", "0");
+
+        let temp = tempfile::tempdir().unwrap();
+        let outlet = LogOutlet::new(temp.path().to_path_buf());
+        outlet.apply_env_verbosity();
+
+        assert_eq!(outlet.topic_level(LogTopic::Player), LogLevel::Debug);
+        // frame 属于 app 话题：设了它，app 的 DEBUG 行都会记。
+        assert_eq!(outlet.topic_level(LogTopic::App), LogLevel::Debug);
+        // `0` 等于没设。
+        assert_eq!(outlet.topic_level(LogTopic::Prefetch), LogLevel::Info);
+        assert!(!outlet.enabled(LogLevel::Debug, LogTopic::Prefetch));
     }
 
     #[test]

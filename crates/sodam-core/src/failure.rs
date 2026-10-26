@@ -55,6 +55,44 @@ pub enum RecoveryAction {
     FreeSpace,
 }
 
+impl Stage {
+    /// 日志字段 `stage=` 的稳定取值（小写下划线，不随界面语言变化）。
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::ResolveStream => "resolve_stream",
+            Self::Transfer => "transfer",
+            Self::Unpack => "unpack",
+            Self::Input => "input",
+            Self::Network => "network",
+        }
+    }
+}
+
+impl Retryability {
+    /// 日志字段 `retryability=` 的稳定取值。
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Transient => "transient",
+            Self::Throttled => "throttled",
+            Self::Never => "never",
+        }
+    }
+}
+
+impl RecoveryAction {
+    /// 日志字段 `action=` 的稳定取值。
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Nothing => "nothing",
+            Self::Relogin => "relogin",
+            Self::CheckSigner => "check_signer",
+            Self::CheckEntitlement => "check_entitlement",
+            Self::PickAnother => "pick_another",
+            Self::FreeSpace => "free_space",
+        }
+    }
+}
+
 /// 一次播放尝试的失败：阶段 + 可否重试 + 修复动作 + 已脱敏的原始信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaybackFailure {

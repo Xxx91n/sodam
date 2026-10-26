@@ -14,6 +14,7 @@ pub mod login;
 pub mod mem;
 pub mod models;
 pub mod play_report;
+pub mod playback_trace;
 pub mod preferences;
 pub mod queue;
 pub mod session;

@@ -14,6 +14,7 @@ use anyhow::Result;
 use futures_lite::future;
 use gpui::{App, Task};
 use mpris_server::{Metadata, PlaybackStatus, Player, Time, TrackId};
+use sodam_core::log_outlet::{log_event, LogLevel, LogTopic};
 use tokio::sync::mpsc;
 
 use super::{Command, NowPlaying, BUS_NAME, DESKTOP_ENTRY, DISPLAY_NAME};
@@ -51,9 +52,13 @@ impl Controls {
                 let player = match build(commands.clone()).await {
                     Ok(player) => player,
                     Err(error) => {
-                        eprintln!(
-                            "[media] 无法注册 MPRIS：{error}；{} 秒后重试",
-                            backoff.as_secs()
+                        let detail = error.to_string();
+                        let retry_s = backoff.as_secs().to_string();
+                        log_event(
+                            LogLevel::Warn,
+                            LogTopic::Media,
+                            "register_failed",
+                            &[("detail", detail.as_str()), ("retry_s", retry_s.as_str())],
                         );
                         cx.background_executor().timer(backoff).await;
                         backoff = (backoff * 2).min(REGISTER_RETRY_MAX);
@@ -65,7 +70,13 @@ impl Controls {
                 let apply = async {
                     while let Some(update) = receiver.recv().await {
                         if let Err(error) = apply(&player, update).await {
-                            eprintln!("[media] MPRIS 发布失败：{error}");
+                            let detail = error.to_string();
+                            log_event(
+                                LogLevel::Warn,
+                                LogTopic::Media,
+                                "publish_failed",
+                                &[("detail", detail.as_str())],
+                            );
                         }
                     }
                 };
@@ -77,7 +88,13 @@ impl Controls {
                     return;
                 }
                 // 否则是 D-Bus 连接断了（会话重启等），退避后重新注册。
-                eprintln!("[media] MPRIS 连接断开，{} 秒后重连", backoff.as_secs());
+                let retry_s = backoff.as_secs().to_string();
+                log_event(
+                    LogLevel::Warn,
+                    LogTopic::Media,
+                    "connection_lost",
+                    &[("retry_s", retry_s.as_str())],
+                );
                 cx.background_executor().timer(backoff).await;
             }
         });

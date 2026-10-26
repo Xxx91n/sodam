@@ -9,6 +9,7 @@ use gpui::{Context, Window};
 use sodam_core::audio::PlaybackSnapshot;
 use sodam_core::failure::{PlayBudget, PlaybackFailure, RecoveryAction, Retryability, Stage};
 use sodam_core::library::RecommendationSource;
+use sodam_core::log_outlet::{self, log_event, LogLevel, LogTopic};
 use sodam_core::models::{PlaylistItem, SceneItem, TrackItem};
 use sodam_core::playback_trace::{drive_play_attempt, PlaybackTrace};
 use sodam_core::session::Session;
@@ -64,7 +65,7 @@ impl Root {
     /// 触发点：装载成功、切音质、「下一首播放」，以及心跳每 ~5s 的巡检
     /// （后者自动覆盖 append/remove 等队列变更，不必逐个调用点补）。
     pub(crate) fn spawn_prefetch(&mut self, cx: &mut Context<Self>) {
-        let log = std::env::var("SODAM_PREFETCH_LOG").is_ok();
+        let log = log_outlet::enabled(LogLevel::Debug, LogTopic::Prefetch);
         let ahead = prefetch_ahead_count();
         let max_inflight = prefetch_concurrency().max(1);
         let candidates: Vec<TrackItem> = self
@@ -75,7 +76,12 @@ impl Root {
             .collect();
         if candidates.is_empty() {
             if log {
-                eprintln!("[prefetch] 队列没有更前面的曲目，跳过");
+                log_event(
+                    LogLevel::Debug,
+                    LogTopic::Prefetch,
+                    "queue_ahead_empty",
+                    &[],
+                );
             }
             return;
         }
@@ -87,7 +93,12 @@ impl Root {
             if let Some(session) = &self.session {
                 if session.is_cached(&next.id) {
                     if log {
-                        eprintln!("[prefetch] 跳过（已缓存）：{}", next.title);
+                        log_event(
+                            LogLevel::Debug,
+                            LogTopic::Prefetch,
+                            "skip_cached",
+                            &[("track_id", next.id.as_str())],
+                        );
                     }
                     continue;
                 }
@@ -117,7 +128,15 @@ impl Root {
                 continue;
             }
             if log {
-                eprintln!("[prefetch] 开始预取：{}", next.title);
+                log_event(
+                    LogLevel::Debug,
+                    LogTopic::Prefetch,
+                    "start",
+                    &[
+                        ("track_id", next.id.as_str()),
+                        ("title", next.title.as_str()),
+                    ],
+                );
             }
             self.prefetch_inflight.insert(next.id.clone());
             let settings = self.settings.clone();
@@ -129,12 +148,27 @@ impl Root {
             cx.spawn(async move |this, cx| {
                 let outcome = result.await;
                 if log {
-                    match &outcome {
-                        Ok(cached) => {
-                            eprintln!("[prefetch] {} → {}", track.title, cached.quality)
-                        }
-                        Err(failure) => eprintln!("[prefetch] {} 失败: {failure}", track.title),
+                    if let Ok(cached) = &outcome {
+                        log_event(
+                            LogLevel::Debug,
+                            LogTopic::Prefetch,
+                            "done",
+                            &[
+                                ("track_id", track.id.as_str()),
+                                ("quality", cached.quality.as_str()),
+                            ],
+                        );
                     }
+                }
+                if let Err(failure) = &outcome {
+                    // 预取失败不该只在开发期可见：它决定切歌时是秒开还是干等。
+                    let detail = failure.to_string();
+                    log_event(
+                        LogLevel::Warn,
+                        LogTopic::Prefetch,
+                        "failed",
+                        &[("track_id", track.id.as_str()), ("detail", detail.as_str())],
+                    );
                 }
                 let _ = this.update(cx, |root, _cx| {
                     // 只删自己的：避免早先的完成回执误清后来排的曲目（单槽时代踩过）
@@ -452,8 +486,14 @@ impl Root {
 
     /// 跳到队列中的某一首并播放。
     pub fn jump_in_queue(&mut self, index: usize, cx: &mut Context<Self>) {
-        if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-            eprintln!("[player] 队列跳转 → #{index}");
+        if log_outlet::enabled(LogLevel::Debug, LogTopic::Player) {
+            let index = index.to_string();
+            log_event(
+                LogLevel::Debug,
+                LogTopic::Player,
+                "queue_jump",
+                &[("index", index.as_str())],
+            );
         }
         if self.queue.jump(index).is_some() {
             self.sync_queue_cache();
@@ -603,11 +643,14 @@ impl Root {
                             .text("已打开二次验证窗口，请在其中完成验证")
                             .to_string(),
                         Err(err) => {
-                            // 这里没有 `root` 可借，但脱敏不能因此跳过：这条错误
-                            // 可能内嵌带签名 token 的地址，日志同样不许留下它。
-                            eprintln!(
-                                "[failure] 打开二次验证窗口失败: {}",
-                                sodam_core::failure::redact_url_secrets(&err.to_string())
+                            // 这里没有 `root` 可借；脱敏由日志出口在写盘前统一做，
+                            // 不依赖调用方是否拿得到 `root`。
+                            let detail = err.to_string();
+                            log_event(
+                                LogLevel::Warn,
+                                LogTopic::App,
+                                "second_verify_open_failed",
+                                &[("detail", detail.as_str())],
                             );
                             language
                                 .text("打开验证窗口失败，请改用官方客户端导出 Cookie。")
@@ -951,11 +994,17 @@ impl Root {
             .collect();
         self.loading_scenes = true;
         self.loading_scene_cards = !existing_ids.is_empty();
-        if std::env::var("SODAM_SCENE_LOG").is_ok() {
-            eprintln!(
-                "[scenes] load_more start existing={} loading={}",
-                existing_ids.len(),
-                self.loading_scene_cards
+        if log_outlet::enabled(LogLevel::Debug, LogTopic::App) {
+            let existing = existing_ids.len().to_string();
+            let loading = self.loading_scene_cards.to_string();
+            log_event(
+                LogLevel::Debug,
+                LogTopic::App,
+                "scenes_load_start",
+                &[
+                    ("existing", existing.as_str()),
+                    ("loading", loading.as_str()),
+                ],
             );
         }
         let message = if existing_ids.is_empty() {
@@ -1012,8 +1061,32 @@ impl Root {
                 root.loading_scene_cards = false;
                 match result {
                     Ok((modes, cards, mode_error, card_error)) => {
-                        if std::env::var("SODAM_SCENE_LOG").is_ok() {
-                            eprintln!("[scenes] load_more applied cards={} modes={} mode_error={:?} card_error={:?}", cards.len(), modes.len(), mode_error, card_error);
+                        if log_outlet::enabled(LogLevel::Debug, LogTopic::App) {
+                            let cards_count = cards.len().to_string();
+                            let modes_count = modes.len().to_string();
+                            log_event(
+                                LogLevel::Debug,
+                                LogTopic::App,
+                                "scenes_load_applied",
+                                &[
+                                    ("cards", cards_count.as_str()),
+                                    ("modes", modes_count.as_str()),
+                                ],
+                            );
+                        }
+                        if mode_error.is_some() || card_error.is_some() {
+                            // 部分失败默认可见：只开到 DEBUG 才记等于报障时又是空白。
+                            let mode_error_text = mode_error.as_deref().unwrap_or_default();
+                            let card_error_text = card_error.as_deref().unwrap_or_default();
+                            log_event(
+                                LogLevel::Warn,
+                                LogTopic::App,
+                                "scenes_load_partial",
+                                &[
+                                    ("mode_error", mode_error_text),
+                                    ("card_error", card_error_text),
+                                ],
+                            );
                         }
                         let mut covers: Vec<String> = cards
                             .iter()
@@ -1035,8 +1108,7 @@ impl Root {
                         root.sync_scenes_list();
                         root.ensure_covers(&covers, cx);
                         if let Some(err) = mode_error.or(card_error) {
-                            let message =
-                                root.failure_text("读取听歌模式失败", &err, REMOTE_TEXT);
+                            let message = root.failure_text("读取听歌模式失败", &err, REMOTE_TEXT);
                             root.notify_warning_once("scenes-load-failed", message);
                         } else if added == 0 {
                             root.set_status_text(root.tr("没有更多探索歌单"));
@@ -1047,8 +1119,7 @@ impl Root {
                         }
                     }
                     Err(err) => {
-                        let message =
-                            root.failure_text("读取听歌模式失败", &err, REMOTE_TEXT);
+                        let message = root.failure_text("读取听歌模式失败", &err, REMOTE_TEXT);
                         root.notify_error_once("scenes-load-failed", message);
                     }
                 }
@@ -1686,15 +1757,24 @@ impl Root {
                 let (path, color) = task.await;
                 let _ = this.update(cx, |root, cx| {
                     root.cover_pool.done();
-                    if std::env::var("SODAM_THEME_LOG").is_ok() {
-                        eprintln!(
-                            "[theme] cover url={:?} path={:?} color={:?}",
-                            url,
-                            path.as_ref().map(|path| path
-                                .file_name()
-                                .map(|name| name.to_string_lossy())
-                                .unwrap_or_default()),
-                            color
+                    if log_outlet::enabled(LogLevel::Debug, LogTopic::App) {
+                        let file = path
+                            .as_ref()
+                            .and_then(|path| path.file_name())
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let color = color
+                            .map(|rgb| format!("{rgb:?}"))
+                            .unwrap_or_else(|| "none".to_string());
+                        log_event(
+                            LogLevel::Debug,
+                            LogTopic::App,
+                            "cover_resolved",
+                            &[
+                                ("url", url.as_str()),
+                                ("file", file.as_str()),
+                                ("color", color.as_str()),
+                            ],
                         );
                     }
                     let has_result = path.is_some() || color.is_some();
@@ -2237,10 +2317,18 @@ impl Root {
             let _ = this.update(cx, |root, cx| {
                 // 这次加载已经被更新的播放请求取代 → 整个结果作废
                 if root.play_seq != request_seq {
-                    if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-                        eprintln!(
-                            "[player] 丢弃过期加载结果（seq={request_seq} 当前={}）：{}",
-                            root.play_seq, track.title
+                    if log_outlet::enabled(LogLevel::Debug, LogTopic::Player) {
+                        let seq = request_seq.to_string();
+                        let current = root.play_seq.to_string();
+                        log_event(
+                            LogLevel::Debug,
+                            LogTopic::Player,
+                            "load_stale",
+                            &[
+                                ("seq", seq.as_str()),
+                                ("current", current.as_str()),
+                                ("track_id", track.id.as_str()),
+                            ],
                         );
                     }
                     return;

@@ -12,6 +12,7 @@ use gpui::{
 };
 use sodam_core::{
     library::{RecommendationSource, SceneCard, SearchScope},
+    log_outlet::{self, log_event, LogLevel, LogTopic},
     login::{LoginStatus, QrMatrix},
     models::{
         AlbumDetail, ArtistDetail, LyricLine, PlaylistItem, SceneItem, SearchResults, TrackItem,
@@ -681,7 +682,7 @@ impl Root {
         }
 
         // 开发期滚动压测：`SODAM_SCROLL_TEST=1` 时按行推进滚动，
-        // 配合 `SODAM_FRAME_LOG=1` 就能量出「滑动是否掉帧」，不用手工滚。
+        // 配合 `SODAM_FRAME_LOG=1`（把 app 话题提到 DEBUG）就能量出「滑动是否掉帧」，不用手工滚。
         if std::env::var("SODAM_SCROLL_TEST").is_ok() {
             let handle = root.liked_scroll.clone();
             cx.spawn(async move |_this, cx| {
@@ -748,14 +749,21 @@ impl Root {
                     (picks.len() == 2).then_some(picks)
                 });
                 let Some(picks) = picks else {
-                    if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-                        eprintln!("[player] 竞态测试：缓存里找不到两首未下载的歌，跳过");
-                    }
+                    log_event(
+                        LogLevel::Debug,
+                        LogTopic::Player,
+                        "race_probe_skip",
+                        &[("reason", "no_uncached_tracks")],
+                    );
                     return;
                 };
-                if std::env::var("SODAM_PLAYER_LOG").is_ok() {
-                    eprintln!("[player] 竞态测试：A=#{}, B=#{}", picks[0], picks[1]);
-                }
+                let (first, second) = (picks[0].to_string(), picks[1].to_string());
+                log_event(
+                    LogLevel::Debug,
+                    LogTopic::Player,
+                    "race_probe_pick",
+                    &[("a", first.as_str()), ("b", second.as_str())],
+                );
                 this.update(cx, |root, cx| {
                     root.play_from(root.liked.as_ref().clone(), picks[0], cx);
                 });
@@ -1164,14 +1172,19 @@ impl Root {
         self.show_status();
     }
 
-    /// 技术原文的唯一去处：现在只进终端（发布版是 GUI 子系统程序，等于看不到），
-    /// 日志出口落地后由它写文件。界面文案一律不用它——用户只看人话。
+    /// 技术原文的唯一去处：诊断日志（默认开，写在本机日志目录）。
+    /// 界面文案一律不用它——用户只看人话。
     ///
-    /// 进这里的内容已切断查询串：日志里也不许出现签名 token。
+    /// 话题是 `app`：设置保存、登录、搜索、歌单这些非播放链路的失败都归这里。
+    /// 播放链路的失败另有 `player` 话题的尝试轨迹，不靠这条。
+    /// 进这里的内容不需要自己脱敏：日志出口在写盘前统一切断查询串与凭据。
     pub(crate) fn log_failure(&self, context: &str, error: impl std::fmt::Display) {
-        eprintln!(
-            "[failure] {context}: {}",
-            sodam_core::failure::redact_url_secrets(&error.to_string())
+        let detail = error.to_string();
+        log_event(
+            LogLevel::Error,
+            LogTopic::App,
+            "failure",
+            &[("context", context), ("detail", detail.as_str())],
         );
     }
 
@@ -1299,7 +1312,7 @@ impl Render for Root {
             self.search_focus_pending = false;
             window.focus(&self.search_focus, cx);
         }
-        // 开发期帧耗时探针（`SODAM_FRAME_LOG=1`）：渲染超过 16ms 就打一行。
+        // 开发期帧耗时探针（`SODAM_FRAME_LOG=1` 把 app 话题提到 DEBUG）：渲染超过 16ms 就打一行。
         // 排查「UI 卡死」先看这里，而不是靠感觉。
         let frame_started = std::time::Instant::now();
         if self.theme_follows_system {
@@ -1313,12 +1326,25 @@ impl Render for Root {
         let ambient_color = ambient_url
             .as_deref()
             .and_then(|url| self.ambient_colors.get(url).copied());
-        if std::env::var("SODAM_THEME_LOG").is_ok() {
-            eprintln!(
-                "[theme] current={:?} url={:?} color={:?}",
-                self.queue.current().map(|track| track.title.clone()),
-                ambient_url,
-                ambient_color
+        if log_outlet::enabled(LogLevel::Debug, LogTopic::App) {
+            let current = self
+                .queue
+                .current()
+                .map(|track| track.title.clone())
+                .unwrap_or_default();
+            let url = ambient_url.clone().unwrap_or_default();
+            let color = ambient_color
+                .map(|rgb| format!("{rgb:?}"))
+                .unwrap_or_else(|| "none".to_string());
+            log_event(
+                LogLevel::Debug,
+                LogTopic::App,
+                "theme_snapshot",
+                &[
+                    ("current", current.as_str()),
+                    ("url", url.as_str()),
+                    ("color", color.as_str()),
+                ],
             );
         }
         theme::set_ambient_rgb(ambient_color);
@@ -1437,7 +1463,7 @@ impl Render for Root {
                     )
                 },
             );
-        if std::env::var("SODAM_FRAME_LOG").is_ok() {
+        if log_outlet::enabled(LogLevel::Debug, LogTopic::App) {
             let elapsed = frame_started.elapsed().as_millis();
             if elapsed > 16 {
                 let rows = match self.nav {
@@ -1446,7 +1472,19 @@ impl Render for Root {
                     Nav::Library => self.playlists.len(),
                     _ => 0,
                 };
-                eprintln!("[frame] {elapsed}ms nav={:?} rows={rows}", self.nav);
+                let elapsed_ms = elapsed.to_string();
+                let nav = format!("{:?}", self.nav);
+                let rows = rows.to_string();
+                log_event(
+                    LogLevel::Debug,
+                    LogTopic::App,
+                    "frame_slow",
+                    &[
+                        ("elapsed_ms", elapsed_ms.as_str()),
+                        ("nav", nav.as_str()),
+                        ("rows", rows.as_str()),
+                    ],
+                );
             }
         }
         element

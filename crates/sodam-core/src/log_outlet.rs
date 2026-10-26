@@ -1183,6 +1183,22 @@ impl LogOutlet {
         }
     }
 
+    /// 刷新待写盘的折叠缓冲区；返回时此前投递的行都已落到文件（或内存降级缓冲）。
+    pub fn flush(&self) {
+        let ack = {
+            let (ack_tx, ack_rx) = mpsc::channel();
+            let guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(tx) = guard.as_ref() else {
+                return;
+            };
+            if tx.send(WriterMsg::Flush(ack_tx)).is_err() {
+                return;
+            }
+            ack_rx
+        };
+        let _ = ack.recv();
+    }
+
     /// 该话题的该级别是否会真的写出：调用方可以据此跳过昂贵的字段构造。
     pub fn enabled(&self, level: LogLevel, topic: LogTopic) -> bool {
         level >= self.topic_level(topic)
@@ -1198,22 +1214,6 @@ impl LogOutlet {
                 self.set_topic_level(topic, LogLevel::Debug);
             }
         }
-    }
-
-    /// 刷新待写盘的折叠缓冲区；返回时此前投递的行都已落到文件（或内存降级缓冲）。
-    pub fn flush(&self) {
-        let ack = {
-            let (ack_tx, ack_rx) = mpsc::channel();
-            let guard = self.tx.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(tx) = guard.as_ref() else {
-                return;
-            };
-            if tx.send(WriterMsg::Flush(ack_tx)).is_err() {
-                return;
-            }
-            ack_rx
-        };
-        let _ = ack.recv();
     }
 
     /// 记录结构化诊断记录。

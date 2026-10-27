@@ -60,11 +60,14 @@ libresoda 的 HTTP 和下载是阻塞的；GPUI 渲染不能阻塞。规则如�
 
 ```text
 TrackItem + cache path
-  → CachedTrack（本地路径、音质、缓存租约）
+  → CachedTrack（本地路径、实际音质、档位分数、缓存租约）
   → PlaybackEngine::load(track, cached) → 装载序号
   → rodio Decoder + Sink
-  → snapshot: track_id / title / playing / position / duration / quality / error
+  → snapshot: track_id / title / playing / position / duration / quality / quality_rank / error
 ```
+
+音质偏好只存**意图**（`auto` 或具体档位）；实际档位由服务端决定，`CachedTrack::quality_rank`
+与快照里的同名字段把它带上来，界面据此判断「降档」并把结论写在播放条上（见 ADR 0003）。
 
 播放结束时音频线程标记 `finished`；GPUI 心跳读取 snapshot，调用 `next_track`。
 签名不足或设备不匹配时，libresoda 可能只返回试听；错误会进入状态行或播放页重试区。

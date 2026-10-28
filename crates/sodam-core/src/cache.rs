@@ -633,14 +633,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = file(dir.path(), "upgrading-song-auto.m4a", 100);
         file(dir.path(), "upgrading-song-auto.quality", 100);
-        let part = file(dir.path(), "upgrading-song-auto.part", 0);
+        let part = file(dir.path(), "upgrading-song-auto.part", 100);
 
         // 模拟升级开始：获取租约
         let target_lease = CacheLease::acquire(&target);
         let part_lease = CacheLease::acquire(&part);
 
-        // 淘汰超额缓存：limit_bytes 为 0，正常应淘汰全部文件
-        assert_eq!(trim_audio_in(dir.path(), 0), 20);
+        // 淘汰超额缓存：limit_bytes 为 0，但因为3个文件（各10字节）均受保护，剩余30字节
+        assert_eq!(trim_audio_in(dir.path(), 0), 30);
         // 正在升级的 target、sidecar 以及 part 均被保护
         assert!(target.exists());
         assert!(target.with_extension("quality").exists());
@@ -655,10 +655,11 @@ mod tests {
         drop(target_lease);
         drop(part_lease);
 
-        // 释放租约后，淘汰可以正常回收
+        // 释放租约后，淘汰可以正常回收全部3个文件
         assert_eq!(trim_audio_in(dir.path(), 0), 0);
         assert!(!target.exists());
         assert!(!target.with_extension("quality").exists());
+        assert!(!part.exists());
     }
 
     #[cfg(unix)]

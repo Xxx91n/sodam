@@ -447,6 +447,10 @@ pub struct Root {
     pub(crate) cache_summary: (u64, usize, u64, usize),
     pub(crate) cache_maintenance_running: bool,
     pub(crate) cache_clearing: bool,
+    pub(crate) batch_upgrade_target: sodam_core::quality::QualityIntent,
+    pub(crate) batch_upgrade_estimate: Option<sodam_core::cache::UpgradeEstimate>,
+    pub(crate) batch_upgrading: bool,
+    pub(crate) batch_upgrade_progress: (usize, usize),
     /// 正在删除诊断日志；只用于禁用重复点击，与缓存清理互不影响。
     pub(crate) log_clearing: bool,
     /// 下载完成后交给音频线程的装载序号；避免同一曲目重载/失败时永久 loading。
@@ -672,6 +676,10 @@ impl Root {
             cache_summary: (0, 0, 0, 0),
             cache_maintenance_running: false,
             cache_clearing: false,
+            batch_upgrade_target: sodam_core::quality::QualityIntent::Tier("lossless".into()),
+            batch_upgrade_estimate: None,
+            batch_upgrading: false,
+            batch_upgrade_progress: (0, 0),
             log_clearing: false,
             pending_engine_load: None,
             pending_track: None,

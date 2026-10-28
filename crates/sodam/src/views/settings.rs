@@ -991,6 +991,149 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                             root.tr("清空缓存")
                         }),
                 )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(theme::space::XS))
+                        .mt(px(theme::space::SM))
+                        .child(
+                            div()
+                                .text_size(theme::Text::Medium.size())
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(theme::text())
+                                .child(root.tr("批量升级缓存")),
+                        )
+                        .child(
+                            div()
+                                .text_size(theme::Text::Small.size())
+                                .text_color(theme::text_muted())
+                                .child(
+                                    root.tr(
+                                        "将已有低档位缓存重新拉取为更高音质，失败不会损坏旧缓存",
+                                    ),
+                                ),
+                        )
+                        .child(
+                            div().flex().flex_wrap().gap(px(theme::space::SM)).children(
+                                [
+                                    ("lossless", root.tr("无损")),
+                                    ("highest", root.tr("极高")),
+                                    ("medium", root.tr("较高")),
+                                ]
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, (tier, label))| {
+                                    let is_selected = root.batch_upgrade_target
+                                        == sodam_core::quality::QualityIntent::Tier(
+                                            tier.to_string(),
+                                        );
+                                    div()
+                                        .id(("batch-upgrade-tier", index))
+                                        .h(px(theme::size::CONTROL_SM))
+                                        .px(px(theme::space::MD))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(theme::radius::ROW))
+                                        .bg(if is_selected {
+                                            theme::surface_selected()
+                                        } else {
+                                            theme::surface_elevated()
+                                        })
+                                        .hover(|style| style.bg(theme::surface_hover()))
+                                        .cursor_pointer()
+                                        .text_size(theme::Text::Small.size())
+                                        .child(label)
+                                        .on_click(cx.listener(
+                                            move |root, _event: &ClickEvent, _window, cx| {
+                                                root.set_batch_upgrade_target(
+                                                    sodam_core::quality::QualityIntent::Tier(
+                                                        tier.to_string(),
+                                                    ),
+                                                    cx,
+                                                );
+                                            },
+                                        ))
+                                }),
+                            ),
+                        )
+                        .child({
+                            let estimate_text = if root.batch_upgrading {
+                                root.localized(
+                                    "正在升级 ({} / {})…",
+                                    &[
+                                        root.batch_upgrade_progress.0.to_string(),
+                                        root.batch_upgrade_progress.1.to_string(),
+                                    ],
+                                )
+                            } else if let Some(estimate) = &root.batch_upgrade_estimate {
+                                if estimate.upgradeable_count == 0 {
+                                    root.tr("所有缓存歌曲均已达到或超过该档位").to_string()
+                                } else {
+                                    let delta = estimate.net_disk_delta_bytes();
+                                    let delta_str = if delta >= 0 {
+                                        format!("+{}", human_bytes(delta as u64))
+                                    } else {
+                                        format!("-{}", human_bytes((-delta) as u64))
+                                    };
+                                    root.localized(
+                                        "{} 首歌曲可升级 · 预估流量 {} · 存储变化 {}",
+                                        &[
+                                            estimate.upgradeable_count.to_string(),
+                                            human_bytes(estimate.estimated_traffic_bytes),
+                                            delta_str,
+                                        ],
+                                    )
+                                }
+                            } else {
+                                root.tr("正在计算升级预估…").to_string()
+                            };
+                            div()
+                                .text_size(theme::Text::Small.size())
+                                .text_color(theme::text_muted())
+                                .child(estimate_text)
+                        })
+                        .child({
+                            let upgradeable = root
+                                .batch_upgrade_estimate
+                                .as_ref()
+                                .map_or(0, |e| e.upgradeable_count);
+                            let can_upgrade = !root.batch_upgrading && upgradeable > 0;
+                            let mut btn = div()
+                                .id("batch-upgrade")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .h(px(theme::size::CONTROL))
+                                .w(px(140.0))
+                                .rounded(px(theme::radius::ROW))
+                                .text_size(theme::Text::Small.size());
+
+                            if can_upgrade {
+                                btn = btn
+                                    .bg(theme::accent())
+                                    .text_color(theme::accent_foreground())
+                                    .cursor_pointer()
+                                    .hover(|style| style.opacity(0.9))
+                                    .on_click(cx.listener(
+                                        |root, _event: &ClickEvent, _window, cx| {
+                                            root.start_batch_upgrade(cx);
+                                        },
+                                    ));
+                            } else {
+                                btn = btn
+                                    .bg(theme::surface_elevated())
+                                    .text_color(theme::text_faint());
+                            }
+
+                            btn.child(if root.batch_upgrading {
+                                root.tr("正在升级…")
+                            } else {
+                                root.tr("批量升级")
+                            })
+                        }),
+                )
         })
         .child(diagnostic_log_section(root, cx))
         .child(

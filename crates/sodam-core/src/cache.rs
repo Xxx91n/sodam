@@ -237,7 +237,7 @@ impl CachedAudioRecord {
 
 /// 读取单个音频缓存文件及其边车，构造记录。
 pub fn read_cache_record(m4a_path: &Path) -> Option<CachedAudioRecord> {
-    if m4a_path.extension().map_or(true, |ext| ext != "m4a") {
+    if m4a_path.extension().and_then(|ext| ext.to_str()) != Some("m4a") {
         return None;
     }
     let meta = std::fs::metadata(m4a_path).ok()?;

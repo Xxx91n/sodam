@@ -428,7 +428,7 @@ impl Session {
         track: &crate::models::TrackItem,
         target_intent: Option<&crate::quality::QualityIntent>,
     ) -> Result<CachedTrack, crate::failure::PlaybackFailure> {
-        use crate::failure::{classify, PlaybackFailure, RecoveryAction, Retryability, Stage};
+        use crate::failure::{PlaybackFailure, RecoveryAction, Retryability, Stage};
 
         let dir = crate::audio::cache_dir();
         let tag = self.quality_tag();
@@ -439,11 +439,11 @@ impl Session {
         let current = match self.cached_track(&track.id) {
             Some(c) => c,
             None => {
-                return Err(classify(
+                return Err(PlaybackFailure::new(
                     Stage::Input,
-                    "track is not in local cache",
                     Retryability::NonRetryable,
-                    RecoveryAction::None,
+                    RecoveryAction::Nothing,
+                    "track is not in local cache",
                 ));
             }
         };

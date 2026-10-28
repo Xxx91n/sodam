@@ -242,7 +242,7 @@ impl CachedAudioRecord {
     pub fn is_upgradeable_to(&self, target_rank: i64) -> bool {
         let within_cap = crate::quality::QualityIntent::parse(&self.quality_tag)
             .max_rank()
-            .map_or(true, |cap| target_rank <= cap);
+            .is_none_or(|cap| target_rank <= cap);
         !self.preview && within_cap && self.is_below_target(target_rank)
     }
 }

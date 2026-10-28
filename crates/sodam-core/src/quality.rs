@@ -100,6 +100,50 @@ pub fn is_downgraded(intent: &QualityIntent, actual: Option<i64>) -> bool {
     actual < max
 }
 
+/// 获取音质意图在给定账号 VIP 状态下的目标档位分数。
+///
+/// 具体档位返回其对应的分数（如无损 100、极高 80、较高 70、标准 50）；
+/// 「自动」在意图上不设上限，但在已知为 VIP 时目标为无损（100）。
+/// 若在「自动」下且非 VIP 或 VIP 状态未知，则返回 `None`（不指定确定目标）。
+pub fn target_rank(intent: &QualityIntent, is_vip: Option<bool>) -> Option<i64> {
+    match intent {
+        QualityIntent::Tier(_) => intent.max_rank(),
+        QualityIntent::Auto => {
+            if is_vip.unwrap_or(false) {
+                Some(100)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// 实际档位是否低于目标档位分数。
+///
+/// `actual` 缺失（旧缓存未知档位）时返回 `false`。
+pub fn is_below_target(actual: Option<i64>, target: i64) -> bool {
+    match actual {
+        Some(rank) => rank < target,
+        None => false,
+    }
+}
+
+/// 命中缓存时，当前档位是否低于所选（可升级判定）。
+///
+/// * 所选为具体档位：实际档位低于该档位即为真；
+/// * 所选为「自动」且为 VIP：实际档位低于无损（100）即为真（非会员时期缓存的低档流在会员后可升级）；
+/// * 实际档位未知（旧缓存没有记录分数）时返回 `false`：不知道就不能断言低于所选，也不触发重下。
+pub fn is_tier_below_selected(
+    actual: Option<i64>,
+    intent: &QualityIntent,
+    is_vip: Option<bool>,
+) -> bool {
+    let Some(target) = target_rank(intent, is_vip) else {
+        return false;
+    };
+    is_below_target(actual, target)
+}
+
 /// 一条流（`DownloadInfo`）的档位分数，用于写进缓存边车。
 pub fn stream_rank(info: &libresoda::soda::types::DownloadInfo) -> i64 {
     quality_rank(&info.quality, &info.format, info.bitrate)
@@ -239,5 +283,47 @@ mod tests {
                 sample.bitrate
             );
         }
+    }
+
+    #[test]
+    fn tier_below_selected_and_upgrade_decision() {
+        let lossless = QualityIntent::parse("lossless");
+        let highest = QualityIntent::parse("highest");
+        let auto = QualityIntent::Auto;
+
+        // 具体档位（无损，100）：低于 100 即可升级，等于或高于不算
+        assert!(is_tier_below_selected(Some(80), &lossless, None));
+        assert!(is_tier_below_selected(Some(50), &lossless, Some(false)));
+        assert!(!is_tier_below_selected(Some(100), &lossless, None));
+        assert!(!is_tier_below_selected(Some(110), &lossless, None));
+        assert!(!is_tier_below_selected(None, &lossless, None));
+
+        // 具体档位（极高，80）：
+        assert!(is_tier_below_selected(Some(70), &highest, None));
+        assert!(!is_tier_below_selected(Some(80), &highest, None));
+        assert!(!is_tier_below_selected(Some(100), &highest, None));
+
+        // 自动模式：
+        // 1. VIP 用户：目标收敛到无损（100），非会员时期缓存的 50/70/80 均判断为可升级
+        assert!(is_tier_below_selected(Some(50), &auto, Some(true)));
+        assert!(is_tier_below_selected(Some(80), &auto, Some(true)));
+        assert!(!is_tier_below_selected(Some(100), &auto, Some(true)));
+        assert!(!is_tier_below_selected(None, &auto, Some(true)));
+
+        // 2. 非 VIP 或未知：不指定上限，不盲目判断为低于所选
+        assert!(!is_tier_below_selected(Some(50), &auto, Some(false)));
+        assert!(!is_tier_below_selected(Some(50), &auto, None));
+
+        // 目标分数与直接比较测试
+        assert_eq!(target_rank(&lossless, None), Some(100));
+        assert_eq!(target_rank(&highest, None), Some(80));
+        assert_eq!(target_rank(&auto, Some(true)), Some(100));
+        assert_eq!(target_rank(&auto, Some(false)), None);
+        assert_eq!(target_rank(&auto, None), None);
+
+        assert!(is_below_target(Some(70), 100));
+        assert!(!is_below_target(Some(100), 100));
+        assert!(!is_below_target(Some(110), 100));
+        assert!(!is_below_target(None, 100));
     }
 }

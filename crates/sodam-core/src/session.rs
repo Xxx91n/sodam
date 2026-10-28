@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn upgrade_cached_track_fails_fast_when_not_cached() {
         let session = Session::new(Settings::default());
-        let track = TrackItem {
+        let track = crate::TrackItem {
             id: "non-existent-track-999".into(),
             ..Default::default()
         };

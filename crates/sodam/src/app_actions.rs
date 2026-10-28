@@ -1048,6 +1048,14 @@ impl Root {
         autoplay: bool,
         cx: &mut Context<Self>,
     ) {
+        // 队列已经就位，切换态必须在这里终结。
+        //
+        // `switching_queue` 会让歌词页整页停在「正在切换」的加载态
+        // （`lyrics_view` 开头的守卫）。原先只有推荐流在**加载回调**里清它，
+        // 而听歌模式走的是 `start_scene_queue` → 本函数，回调里忘了清，
+        // 于是点进「熟悉模式 / 新鲜模式」后歌词页永久转圈，但音频其实已经在放。
+        // 放在这里对所有调用方（推荐 / 听歌模式 / 探索电台上游）一并生效。
+        self.switching_queue = None;
         self.queue.replace(tracks, 0);
         self.played_history.clear();
         self.playback_error = None;
@@ -1290,6 +1298,13 @@ impl Root {
                         );
                     }
                     Err(err) => {
+                        // 失败也要结束切换态：否则歌词页会停在「正在切换」的
+                        // 加载态上，用户既看不到错误也回不去。
+                        //
+                        // 并且和推荐流保持一致——回到有重试入口的页面（听歌模式列表），
+                        // 而不是留在已经停播的歌词页上。
+                        root.switching_queue = None;
+                        root.set_nav(Nav::Scenes, cx);
                         let message = root.failure_text("加载听歌模式队列失败", &err, REMOTE_TEXT);
                         root.notify_error_once("scene-queue-load-failed", message);
                     }

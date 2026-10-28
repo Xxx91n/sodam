@@ -84,6 +84,12 @@ impl CoverPool {
 /// 会把主线程顶住；分批渲染 + 「显示更多」是这里最稳的做法。
 pub const ROW_BATCH: usize = 40;
 
+/// 逐字高亮最多往前外推多久（秒）。
+///
+/// 音频线程 100ms 一拍，正常外推不超过 100ms；250ms 是给「快照刚好停住」留的余量——
+/// 再多就说明真的卡了，宁可停住也别让亮光跑到声音前面（#80）。
+const LYRIC_LOOKAHEAD_SECONDS: f64 = 0.25;
+
 /// 把扫码状态翻成中文短标签（用于「等待扫码 / 已扫码」这类提示）。
 pub(crate) fn status_label(status: LoginStatus, language: Language) -> &'static str {
     match status {
@@ -262,6 +268,21 @@ pub struct Root {
     pub loading_lyrics: bool,
     pub lyrics_error: Option<String>,
     pub lyrics_active: Option<usize>,
+    /// 最近一帧的播放位置（秒）；逐字高亮按它决定亮到第几个字。
+    ///
+    /// 由 `Root::render` 每帧写入，`views::lyrics` 只读。存在这里而不是在渲染函数里
+    /// 取快照，是因为渲染路径不应该额外拿锁。
+    pub(crate) lyrics_position_seconds: f64,
+    /// 上一次从引擎读到播放位置时的「本地时刻」与「读到的那一帧的值」。
+    ///
+    /// 音频线程每 100ms 才写一次 `position_seconds`，而 UI 以 60fps 重绘。
+    /// 直接读快照会让亮光每 100ms 跳一格（肉眼就是“不流畅”）。这里按本地
+    /// 单调时钟把两次快照之间的位置线性外推，让高亮连续地走。
+    /// `(读到时的 Instant, 读到时的秒数)`。
+    pub(crate) lyrics_position_anchor: Option<(std::time::Instant, f64)>,
+    /// 逐字高亮样张模式：设置后 `render` 每帧把播放位置固定在这个秒数（#80 的视觉验证）。
+    /// 生产环境恒为 `None`。
+    pub(crate) lyrics_demo_position: Option<f64>,
     /// 歌词区自己管滚动（外层是普通滚动容器，不是虚拟列表），
     /// 这样长句折行后行高不一致也能正确定位。
     pub lyrics_scroll: gpui::ScrollHandle,
@@ -272,6 +293,15 @@ pub struct Root {
     pub lyrics_user_scroll_until: Option<std::time::Instant>,
     /// 等待下一帧补做的歌词对齐（布局未就绪时记下目标句）。
     pub(crate) pending_lyrics_scroll: Option<usize>,
+    /// 歌词滚动的过渡动画：`(起点偏移, 终点偏移, 开始时刻)`。
+    ///
+    /// 直接 `set_offset` 会让整块歌词在换句瞬间瞬移，即便只是挪一行的高度，
+    /// 肉眼也会觉得"跳"。这里改成在 ticker 的每一帧里按缓出曲线插值，
+    /// 让换句像"滑上去"而不是"闪过去"（官方 CSS 是 `transition: transform .4s ease-out`）。
+    pub(crate) lyrics_scroll_tween: Option<(f32, f32, std::time::Instant, std::time::Duration)>,
+    /// 当前过渡动画的目标句。用来判断"目标句有没有变"，
+    /// 避免每帧重算目标（`bounds_for_item` 含滚动偏移，滚动中每帧都在变）。
+    pub(crate) lyrics_scroll_tween_index: Option<usize>,
     /// 防止快速换歌时旧歌词请求回写。
     lyrics_request_seq: u64,
     pub search_field: TextField,
@@ -543,9 +573,14 @@ impl Root {
             loading_lyrics: false,
             lyrics_error: None,
             lyrics_active: None,
+            lyrics_position_seconds: 0.0,
+            lyrics_position_anchor: None,
+            lyrics_demo_position: None,
             lyrics_scroll: gpui::ScrollHandle::new(),
             lyrics_user_scroll_until: None,
             pending_lyrics_scroll: None,
+            lyrics_scroll_tween: None,
+            lyrics_scroll_tween_index: None,
             lyrics_request_seq: 0,
             search_field: TextField::default(),
             search_drag_by_word: false,
@@ -689,6 +724,94 @@ impl Root {
             root.on_nav_changed(cx);
             cx.notify();
         }
+        // 开发/验证便利：`SODAM_LYRICS_DEMO=<秒>` 直接进入歌词页并注入一份逐字样张，
+        // 把播放位置固定在该秒数以观察逐字高亮（#80）。不依赖登录与网络。
+        //
+        // 和 `SODAM_QUERY` / `SODAM_NAV` 同级：只在显式设置时才生效，生产环境不设就等于不存在。
+        // 位置来自环境变量，或临时目录里的 `sodam-lyrics-demo` 文件——后者是为了在
+        // GUI 会话（无法注入环境变量）里也能触发。
+        // 环境变量是**显式**的，任何构建都可用；临时文件只在 debug 构建读取。
+        //
+        // 文件入口必须限死在 debug：`/tmp` 在 Linux 上所有用户可写，测试残留或
+        // 别人创建的同名文件都会把正式版拖进样张模式（换掉队列、真实歌词永不加载、
+        // ticker 恒 60fps）。生产二进制不该有这种外部可触发的开关。
+        let demo_position = std::env::var("SODAM_LYRICS_DEMO")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .or_else(|| {
+                if !cfg!(debug_assertions) {
+                    return None;
+                }
+                std::fs::read_to_string(std::env::temp_dir().join("sodam-lyrics-demo")).ok()
+            });
+        if let Some(demo_position) = demo_position {
+            let position = demo_position.trim().parse::<f64>().unwrap_or(3.0);
+            // 折行验证用的一句：内容长、在当前列宽下会折成两行，给足 8 秒以便观察
+            // 亮光从第一行推到第二行的全过程（#80）。
+            // 行尾空档验证：最后一个词的结束时间早于行结束时间，
+            // 用来确认行尾那段空档里亮光仍在推进，而不是一下跳到满格（#80）。
+            let wrap_line = "And you think I'm crazy yeah you think I'm crazy";
+            let demo = [
+                (0.0, "偷偷搭询总没完地坐立难安", 3.0),
+                (3.0, "试探说晚安多空泛又心酸", 3.0),
+                (7.0, "低头呢喃", 3.0),
+                (10.0, "对你的偏爱太过于明目张胆", 3.0),
+                (13.0, wrap_line, 8.0),
+            ]
+            .into_iter()
+            .map(|(start, text, duration)| sodam_core::models::LyricLine {
+                start_seconds: start,
+                end_seconds: start + duration,
+                text: text.to_string(),
+                // 前 70% 的字只占 40% 时长，最后 30% 的字占 60% 时长。
+                //
+                // 真实歌词里每字的演唱时长差异很大（拖长音 vs 快词）。这样构造能
+                // 回归两件事：末字不能"唰"一下掠过（按字推进才对），以及末字
+                // 恰好走到行结束。
+                words: {
+                    let chars: Vec<char> = text.chars().collect();
+                    let split = (chars.len() * 7 / 10).max(1);
+                    let mut words = Vec::with_capacity(chars.len());
+                    let mut at = start;
+                    for (index, ch) in chars.iter().enumerate() {
+                        let share = if index < split {
+                            0.4 / split as f64
+                        } else {
+                            0.6 / (chars.len() - split).max(1) as f64
+                        };
+                        let span = duration * share;
+                        words.push(sodam_core::models::LyricWord {
+                            start_seconds: at,
+                            end_seconds: at + span,
+                            text: ch.to_string(),
+                        });
+                        at += span;
+                    }
+                    words
+                },
+                has_word_timeline: true,
+            })
+            .collect::<Vec<_>>();
+            // 歌词页在没有当前曲目时会提前返回占位页，所以样张模式也塞一首假曲目。
+            let demo_track = TrackItem {
+                id: "sodam-lyrics-demo".to_string(),
+                title: "逐字高亮样张".to_string(),
+                artist: "SodaM".to_string(),
+                duration_seconds: 200,
+                ..Default::default()
+            };
+            root.queue.replace(vec![demo_track], 0);
+            root.queue_origin = QueueOrigin::None;
+            root.lyrics = Arc::new(demo);
+            root.lyrics_position_seconds = position;
+            root.lyrics_demo_position = Some(position);
+            root.lyrics_active = root
+                .lyrics
+                .iter()
+                .rposition(|line| position >= line.start_seconds);
+            root.nav = Nav::Lyrics;
+            cx.notify();
+        }
         // 封面需求消费循环：渲染只往队列里塞 URL，这里统一喂给请求池
         //（最多 8 并发 + 去重），避免渲染过程中做任何网络/状态更新。
         {
@@ -730,6 +853,8 @@ impl Root {
             .detach();
         }
         Self::start_heartbeat(cx);
+        // 歌词逐字高亮需要比主心跳更高的刷新率（#80）。
+        Self::start_lyrics_ticker(cx);
 
         // 开发验证用：`SODAM_AUTOPLAY=1` 进收藏页并自动播放第一首；
         // `SODAM_POPUP=quality|queue|volume` 启动即打开对应弹层（便于截图核对）。
@@ -1381,21 +1506,82 @@ impl Render for Root {
         theme::set_ambient_rgb(ambient_color);
         // 上一帧布局未就绪时记下的歌词对齐，在这里补做一次。
         self.flush_pending_lyrics_scroll();
+        // 歌词滚动过渡进行中：用**帧回调**驱动下一帧，而不是等背景 timer。
+        //
+        // `background_executor().timer(16ms)` 不是帧同步的：Windows 默认计时器精度
+        // 约 15.6ms，再叠上调度延迟，实际可能只有 30fps 且间隔不匀 —— 观感就是
+        // "滑得一顿一顿"。`request_animation_frame` 对齐平台的刷新节奏，
+        // 才是真正的逐帧动画。
+        if self.lyrics_scroll_animating() {
+            // 每帧推进一次插值，再请求下一帧（帧回调天然与 VSync 对齐）。
+            if self.advance_lyrics_scroll_tween() {
+                window.request_animation_frame();
+            }
+        }
         if self.nav == Nav::Lyrics {
-            let position = self.engine.snapshot().position_seconds;
+            let position = if let Some(demo) = self.lyrics_demo_position {
+                demo
+            } else {
+                // 音频线程每 100ms 才更新一次快照，而这里以 60fps 重绘。直接读快照会让
+                // 逐字亮光每 100ms 才跳一格——肉眼看就是“一顿一顿”。
+                // 这里按本地时钟在两次快照之间做线性外推，让高亮连续推进。
+                //
+                // 只在**播放中**外推：暂停时位置本就不该变。
+                // “不回退”由 `extrapolate_position` 保证：`Instant` 单调，
+                // 且快照值变化时会重新锚定，不会把旧外推叠加上去。
+                let snapshot = self.engine.snapshot();
+                let raw = snapshot.position_seconds;
+                let now = std::time::Instant::now();
+                if snapshot.playing && snapshot.duration_seconds > 0.0 {
+                    let anchor = self.lyrics_position_anchor.unwrap_or((now, raw));
+                    let (position, anchor) = sodam_core::models::extrapolate_position(
+                        anchor,
+                        raw,
+                        now,
+                        snapshot.duration_seconds,
+                        LYRIC_LOOKAHEAD_SECONDS,
+                    );
+                    self.lyrics_position_anchor = Some(anchor);
+                    position
+                } else {
+                    self.lyrics_position_anchor = Some((now, raw));
+                    raw
+                }
+            };
+            // 逐字高亮需要每帧的播放位置：存下来给 `lyrics_view` 用，
+            // 不能在渲染函数里再取一次快照（那要多一次锁）。
+            self.lyrics_position_seconds = position;
+            // 高亮的"当前句"严格按**本句的时间区间**判定，不带任何提前量。
+            //
+            // 提前量会让上一句在还差几百毫秒时就被标成"已唱过"，于是它最后几个字
+            // 还没走完就被整行点亮（#80 实测："最后一个字一下亮了，然后立刻换下一句"）。
             let active = self
                 .lyrics
                 .iter()
-                .rposition(|line| position + 0.25 >= line.start_seconds)
+                .rposition(|line| position >= line.start_seconds)
                 .or_else(|| (!self.lyrics.is_empty()).then_some(0));
             self.lyrics_active = active;
             // 用户刚手动滚过就让位，别把视图拽回去（官方同样是滚轮后 5 秒内不跟随）。
             let user_scrolling = self
                 .lyrics_user_scroll_until
                 .is_some_and(|until| std::time::Instant::now() < until);
+            // 滚动跟随**与高亮同一个判定**，不再提前。
+            //
+            // 早先这里用 `position + 0.25` 让下一句提前进入视野，结果是滚动动画
+            // 先跑、上一句还亮着，看起来像"还没唱完就开始跳"。现在两者同步：
+            // 上一句交出高亮的同时，才开始把它滑上去。
             if let Some(index) = active {
                 if !user_scrolling {
                     self.scroll_lyrics_to(index);
+                    // 刚刚创建的补间必须当场请求下一帧。
+                    //
+                    // 上面那段 `if self.lyrics_scroll_animating()` 在本函数**更早**的位置，
+                    // 那时补间还不存在；而 ticker 又因"动画进行中"退回空闲档不 notify，
+                    // 所以下一次渲染要等 200ms 主心跳 —— 单行滚动只有 180ms，
+                    // 第一次推进就直接到 1.0，自动换句的"滑上去"会变成瞬移。
+                    if self.lyrics_scroll_animating() {
+                        window.request_animation_frame();
+                    }
                 }
             }
             // 切曲后强制大封面显示至少 200ms 的加载态（即便图已在缓存里）。

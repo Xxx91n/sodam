@@ -233,6 +233,18 @@ impl CachedAudioRecord {
     pub fn is_below_target(&self, target_rank: i64) -> bool {
         crate::quality::is_below_target(self.actual_rank, target_rank)
     }
+
+    /// 当前记录是否允许批量升级至目标档位。
+    ///
+    /// 排除试听片段、已达到或超过目标的记录；同时受该缓存文件自身的 quality_tag 意图上限约束：
+    /// 例如用户在省流模式下缓存的 `-low.m4a`（上限 20），不会被冲高为无损（100），
+    /// 以免后续省流播放时命中数十兆的庞大文件破坏省流意图。
+    pub fn is_upgradeable_to(&self, target_rank: i64) -> bool {
+        let within_cap = crate::quality::QualityIntent::parse(&self.quality_tag)
+            .max_rank()
+            .map_or(true, |cap| target_rank <= cap);
+        !self.preview && within_cap && self.is_below_target(target_rank)
+    }
 }
 
 /// 读取单个音频缓存文件及其边车，构造记录。
@@ -319,8 +331,8 @@ pub fn estimate_upgrade(records: &[CachedAudioRecord], target_rank: i64) -> Upgr
     let single_est = estimated_single_track_bytes(target_rank);
 
     for record in records {
-        // 试听片段不计入可升级整曲
-        if !record.preview && record.is_below_target(target_rank) {
+        // 试听片段不计入可升级整曲，且受 quality_tag 意图上限约束
+        if record.is_upgradeable_to(target_rank) {
             count += 1;
             current_bytes = current_bytes.saturating_add(record.file_size);
             estimated_new_bytes = estimated_new_bytes.saturating_add(single_est);
@@ -710,6 +722,47 @@ mod tests {
         // preview 试听文件不应被计入升级
         assert_eq!(est.upgradeable_count, 1);
         assert_eq!(est.current_bytes, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn is_upgradeable_to_respects_tag_intent_cap() {
+        let auto_record = CachedAudioRecord {
+            track_id: "1".into(),
+            quality_tag: "auto".into(),
+            path: PathBuf::from("1-auto.m4a"),
+            quality_label: "标准 128k".into(),
+            preview: false,
+            actual_rank: Some(50),
+            file_size: 4 * 1024 * 1024,
+        };
+        // auto 无上限，actual 50 可以升级至 100
+        assert!(auto_record.is_upgradeable_to(100));
+
+        let low_record = CachedAudioRecord {
+            track_id: "2".into(),
+            quality_tag: "low".into(),
+            path: PathBuf::from("2-low.m4a"),
+            quality_label: "标准 128k".into(),
+            preview: false,
+            actual_rank: Some(20),
+            file_size: 4 * 1024 * 1024,
+        };
+        // low 标签上限为 20，不允许升级至 100 或 50
+        assert!(!low_record.is_upgradeable_to(100));
+        assert!(!low_record.is_upgradeable_to(50));
+        assert!(!low_record.is_upgradeable_to(20));
+
+        let lossless_downgraded = CachedAudioRecord {
+            track_id: "3".into(),
+            quality_tag: "lossless".into(),
+            path: PathBuf::from("3-lossless.m4a"),
+            quality_label: "极高 320k".into(),
+            preview: false,
+            actual_rank: Some(50),
+            file_size: 10 * 1024 * 1024,
+        };
+        // lossless 标签上限为 100，实际为 50（曾发生降档），允许升级至 100
+        assert!(lossless_downgraded.is_upgradeable_to(100));
     }
 
     #[test]

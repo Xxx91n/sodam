@@ -2120,13 +2120,13 @@ impl Root {
             }
         };
 
-        // 后台扫盘读取待升级记录（排除试听文件），不阻塞主渲染线程
+        // 后台扫盘读取待升级记录（排除试听文件并遵循意图上限），不阻塞主渲染线程
         let scan_work = cx.background_spawn(async move {
             let dir = sodam_core::audio::cache_dir();
             let records = sodam_core::cache::list_cached_audio(&dir);
             records
                 .into_iter()
-                .filter(|r| !r.preview && r.is_below_target(target_rank))
+                .filter(|r| r.is_upgradeable_to(target_rank))
                 .collect::<Vec<_>>()
         });
 
@@ -2201,7 +2201,7 @@ impl Root {
                         "缓存升级完成：成功升级 {} 首，{} 首跳过或无更高档位",
                         &[
                             success_count.to_string(),
-                            (total.saturating_sub(success_count)).to_string(),
+                            total.saturating_sub(success_count).to_string(),
                         ],
                     )
                 };

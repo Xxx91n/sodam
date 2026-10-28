@@ -655,11 +655,15 @@ mod tests {
         drop(target_lease);
         drop(part_lease);
 
-        // 释放租约后，淘汰可以正常回收全部3个文件
-        assert_eq!(trim_audio_in(dir.path(), 0), 0);
+        // 释放租约后，淘汰可以正常回收 target 与 sidecar（临时 part 仍受 24h 保护机制保持）
+        assert_eq!(trim_audio_in(dir.path(), 0), 10);
         assert!(!target.exists());
         assert!(!target.with_extension("quality").exists());
-        assert!(!part.exists());
+        assert!(part.exists());
+
+        // 临时文件被删除后，缓存占用归零
+        std::fs::remove_file(&part).unwrap();
+        assert_eq!(trim_audio_in(dir.path(), 0), 0);
     }
 
     #[cfg(unix)]

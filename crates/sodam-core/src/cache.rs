@@ -703,7 +703,7 @@ mod tests {
                 quality_label: "试听 128k".into(),
                 preview: true,
                 actual_rank: Some(50),
-                file_size: 1 * 1024 * 1024,
+                file_size: 1024 * 1024,
             },
         ];
         let est = estimate_upgrade(&records, 100);

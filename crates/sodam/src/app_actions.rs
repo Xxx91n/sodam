@@ -557,6 +557,7 @@ impl Root {
                 if let Ok(mut tried) = root.cache_upgrade_attempted.lock() {
                     tried.clear();
                 }
+                root.cache_upgrade_inflight.clear();
                 root.cover_pool.seen.clear();
                 let message = root.localized("已清理缓存：{} 个文件", &[removed.to_string()]);
                 root.notify_success_once("cache-clear", message);
@@ -2028,13 +2029,22 @@ impl Root {
         intent: sodam_core::quality::QualityIntent,
         cx: &mut Context<Self>,
     ) {
+        let max_inflight = prefetch_concurrency().max(1);
         let key = format!("{}:{}", track.id, intent.as_setting());
+
+        // N2 并发上限保护（复用 prefetch_concurrency，避免连续切歌并发冲垮签名服务）
+        if self.cache_upgrade_inflight.len() >= max_inflight {
+            return;
+        }
+
         if let Ok(mut attempted) = self.cache_upgrade_attempted.lock() {
-            if !attempted.insert(key) {
+            if !attempted.insert(key.clone()) {
                 // 本次会话已尝试过升级该曲目到此档位，避免反复重试
                 return;
             }
         }
+
+        self.cache_upgrade_inflight.insert(key.clone());
 
         let settings = self.settings.clone();
         let track_clone = track.clone();
@@ -2042,28 +2052,36 @@ impl Root {
             let session = Session::new(settings);
             session.upgrade_cached_track(&track_clone, Some(&intent))
         });
-        cx.spawn(async move |_this, _cx| match work.await {
-            Ok(cached) => {
-                log_outlet::log_event(
-                    LogLevel::Info,
-                    LogTopic::Player,
-                    "cache_upgraded",
-                    &[
-                        ("track_id", track.id.as_str()),
-                        ("quality", cached.quality.as_str()),
-                    ],
-                );
-            }
-            Err(failure) => {
-                log_outlet::log_event(
-                    LogLevel::Debug,
-                    LogTopic::Player,
-                    "cache_upgrade_failed",
-                    &[
-                        ("track_id", track.id.as_str()),
-                        ("detail", failure.detail.as_str()),
-                    ],
-                );
+        let key_clone = key;
+        let track_id = track.id.clone();
+        cx.spawn(async move |this, cx| {
+            let res = work.await;
+            let _ = this.update(cx, |root, _cx| {
+                root.cache_upgrade_inflight.remove(&key_clone);
+            });
+            match res {
+                Ok(cached) => {
+                    log_outlet::log_event(
+                        LogLevel::Info,
+                        LogTopic::Player,
+                        "cache_upgraded",
+                        &[
+                            ("track_id", track_id.as_str()),
+                            ("quality", cached.quality.as_str()),
+                        ],
+                    );
+                }
+                Err(failure) => {
+                    log_outlet::log_event(
+                        LogLevel::Debug,
+                        LogTopic::Player,
+                        "cache_upgrade_failed",
+                        &[
+                            ("track_id", track_id.as_str()),
+                            ("detail", failure.detail.as_str()),
+                        ],
+                    );
+                }
             }
         })
         .detach();
@@ -2074,13 +2092,25 @@ impl Root {
         if self.batch_upgrading {
             return;
         }
+
+        let target_intent = self.batch_upgrade_target.clone();
+        let is_vip = self.account.as_ref().map(|a| a.vip);
+
+        // P2 权益预检：非 VIP 选无损拦截
+        if target_intent == sodam_core::quality::QualityIntent::Tier("lossless".into())
+            && is_vip == Some(false)
+        {
+            let warn = self.tr("无损音质需 VIP 会员权限");
+            self.notify_warn_once("batch-upgrade-vip", warn);
+            cx.notify();
+            return;
+        }
+
         self.batch_upgrading = true;
         self.batch_upgrade_progress = BatchUpgradeProgress::default();
         cx.notify();
 
         let settings = self.settings.clone();
-        let target_intent = self.batch_upgrade_target.clone();
-        let is_vip = self.account.as_ref().map(|a| a.vip);
         let target_rank = match sodam_core::quality::target_rank(&target_intent, is_vip) {
             Some(rank) => rank,
             None => {

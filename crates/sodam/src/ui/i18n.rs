@@ -485,6 +485,10 @@ impl Language {
             "缓存升级完成：成功升级 {} 首，{} 首跳过或无更高档位" => {
                 "Cache upgrade complete: upgraded {} songs, {} skipped or no higher quality"
             }
+            "无损音质需 VIP 会员权限" => "Lossless quality requires VIP membership",
+            "无损音质需 VIP 会员权限，当前账号无法升级为无损" => {
+                "Lossless quality requires VIP membership; current account cannot upgrade to lossless"
+            }
             "诊断日志" => "Diagnostic Logs",
             "默认记录在本机，用于排查播放问题；「清空缓存」不会删除它们" => {
                 "Stored on this device to help diagnose playback problems; Clear Cache never removes them"

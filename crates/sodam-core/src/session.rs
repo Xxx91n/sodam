@@ -473,7 +473,14 @@ impl Session {
         // 获取锁后重读当前缓存，防止并发升级已将其提升
         let current = match self.cached_track(&track.id) {
             Some(c) => c,
-            None => return Ok(current),
+            None => {
+                return Err(PlaybackFailure::new(
+                    Stage::Input,
+                    Retryability::Never,
+                    RecoveryAction::Nothing,
+                    "track was removed from local cache before upgrade lock",
+                ));
+            }
         };
         if !crate::quality::is_tier_below_selected(current.quality_rank, intent, vip) {
             return Ok(current);
@@ -543,6 +550,12 @@ impl Session {
         let quality = describe_quality(&info);
         let preview = info.is_preview;
         let sidecar_content = format!("{quality}\t{written}\t{}\t{new_rank}", u8::from(preview));
+
+        // N1 修复：在执行原子替换重命名序列前，获取 download_lock(&path)，
+        // 保证在极其短暂的重命名窗口期内与点播下载互斥，防止交错写同一组文件。
+        // 锁序为「先 upgrade-lock，后 download-lock」，绝不构成环死锁。
+        let file_lock = crate::cache::download_lock(&path);
+        let _replace_guard = file_lock.lock().unwrap_or_else(|err| err.into_inner());
 
         crate::cache::atomic_replace_cache(&part, &path, &quality_path, &sidecar_content).map_err(
             |err| {
@@ -878,5 +891,17 @@ mod tests {
         assert!(!is_truncated_download(10_569_897, 10_660_358));
         // 截断：实际少于声明
         assert!(is_truncated_download(10_569_897, 10_569_896));
+    }
+
+    #[test]
+    fn upgrade_cached_track_fails_fast_when_not_cached() {
+        let session = Session::new(Settings::default());
+        let track = TrackItem {
+            id: "non-existent-track-999".into(),
+            ..Default::default()
+        };
+        let err = session.upgrade_cached_track(&track, None).unwrap_err();
+        assert_eq!(err.stage, crate::failure::Stage::Input);
+        assert_eq!(err.retryability, crate::failure::Retryability::Never);
     }
 }

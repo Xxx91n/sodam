@@ -1062,7 +1062,13 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                             ),
                         )
                         .child({
-                            let estimate_text = if root.batch_upgrading {
+                            let is_non_vip_lossless = root.batch_upgrade_target
+                                == sodam_core::quality::QualityIntent::Tier("lossless".into())
+                                && root.account.as_ref().map_or(false, |a| !a.vip);
+                            let estimate_text = if is_non_vip_lossless {
+                                root.tr("无损音质需 VIP 会员权限，当前账号无法升级为无损")
+                                    .to_string()
+                            } else if root.batch_upgrading {
                                 root.localized(
                                     "正在升级 ({} / {})…",
                                     &[
@@ -1098,11 +1104,15 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                                 .child(estimate_text)
                         })
                         .child({
+                            let is_non_vip_lossless = root.batch_upgrade_target
+                                == sodam_core::quality::QualityIntent::Tier("lossless".into())
+                                && root.account.as_ref().map_or(false, |a| !a.vip);
                             let upgradeable = root
                                 .batch_upgrade_estimate
                                 .as_ref()
                                 .map_or(0, |e| e.upgradeable_count);
-                            let can_upgrade = !root.batch_upgrading && upgradeable > 0;
+                            let can_upgrade =
+                                !root.batch_upgrading && !is_non_vip_lossless && upgradeable > 0;
                             let mut btn = div()
                                 .id("batch-upgrade")
                                 .flex()

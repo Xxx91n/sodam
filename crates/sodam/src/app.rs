@@ -460,6 +460,8 @@ pub struct Root {
     pub(crate) batch_upgrade_progress: BatchUpgradeProgress,
     /// 单曲后台缓存升级尝试记录（避免同一首低档曲目在切歌或重播时反复拉取升级）。
     pub(crate) cache_upgrade_attempted: Arc<Mutex<HashSet<String>>>,
+    /// 单曲后台缓存升级当前在飞集合（限制并发，避免连续切歌时打满网络与签名服务）。
+    pub(crate) cache_upgrade_inflight: HashSet<String>,
     /// 正在删除诊断日志；只用于禁用重复点击，与缓存清理互不影响。
     pub(crate) log_clearing: bool,
     /// 下载完成后交给音频线程的装载序号；避免同一曲目重载/失败时永久 loading。
@@ -690,6 +692,7 @@ impl Root {
             batch_upgrading: false,
             batch_upgrade_progress: BatchUpgradeProgress::default(),
             cache_upgrade_attempted: Arc::new(Mutex::new(HashSet::new())),
+            cache_upgrade_inflight: HashSet::new(),
             log_clearing: false,
             pending_engine_load: None,
             pending_track: None,

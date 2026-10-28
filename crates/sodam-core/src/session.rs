@@ -440,6 +440,8 @@ impl Session {
         // 详细日志同理：登录走 `apply_login_cookie` → `apply` 会把会话里的副本整体落盘，
         // 副本漏掉这一项就会把用户刚打开的开关写回 false，重启后失效。
         self.settings.detailed_logs = settings.detailed_logs;
+        // 音质与偏好来源同步：主路径 `set_quality` 已整体 `session.apply`，此处做防御性
+        // 冗余兜底，确保在其他触发偏好落盘的分支上会话副本也与外部一致。
         self.settings.quality = settings.quality.clone();
         self.settings.quality_source = settings.quality_source;
     }
@@ -663,10 +665,9 @@ mod tests {
         );
     }
 
-    /// 登录会用会话里的副本整体落盘，所以偏好同步必须带上详细日志与音质偏好来源：
-    /// 漏掉它们，登录时就会把用户刚打开的开关或切换的音质来源覆盖回旧值。
+    /// 偏好同步带上详细日志，并防御性同步音质意图与来源，确保会话副本时刻一致。
     #[test]
-    fn playback_preferences_sync_carries_detailed_logs_and_quality_source() {
+    fn playback_preferences_sync_carries_detailed_logs_and_defensively_syncs_quality() {
         use crate::quality::QualitySource;
 
         let mut session = Session::new(Settings::default());

@@ -28,6 +28,13 @@ pub enum QualitySource {
 }
 
 impl QualitySource {
+    /// 「来源未知」在 i18n 词典中的稳定 key。
+    pub const LABEL_UNKNOWN: &'static str = "来源未知";
+    /// 「手动选择」在 i18n 词典中的稳定 key。
+    pub const LABEL_USER: &'static str = "手动选择";
+    /// 「程序推导」在 i18n 词典中的稳定 key。
+    pub const LABEL_DERIVED: &'static str = "程序推导";
+
     /// 来源在配置中的原始字符串表示。
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -43,9 +50,9 @@ impl QualitySource {
     /// 调用了 `.tr("...")` 字面量；本方法保留给核心层及其他不需要字面量扫描的场景。
     pub fn label_key(&self) -> &'static str {
         match self {
-            Self::Unknown => "来源未知",
-            Self::User => "手动选择",
-            Self::Derived => "程序推导",
+            Self::Unknown => Self::LABEL_UNKNOWN,
+            Self::User => Self::LABEL_USER,
+            Self::Derived => Self::LABEL_DERIVED,
         }
     }
 }

@@ -477,12 +477,12 @@ impl Settings {
         self.quality_source
     }
 
-    /// 写入音质意图：只落意图，不落解析出来的实际档位。默认记录为用户手动选择。
-    pub fn set_quality_intent(&mut self, intent: &crate::quality::QualityIntent) {
+    /// 用户在界面上手动写入音质意图，显式标记来源为 `QualitySource::User`。
+    pub fn set_quality_intent_by_user(&mut self, intent: &crate::quality::QualityIntent) {
         self.set_quality_intent_with_source(intent, crate::quality::QualitySource::User);
     }
 
-    /// 写入音质意图并记录其来源（用户手动选择或程序推导）。
+    /// 写入音质意图并显式记录其来源（用户手动选择或程序推导）。
     pub fn set_quality_intent_with_source(
         &mut self,
         intent: &crate::quality::QualityIntent,
@@ -511,8 +511,8 @@ impl Settings {
     /// 便于先用 shell 跑起来，再逐步落到配置文件。
     ///
     /// `SODAM_QUALITY` 是唯一例外：音质的「自动」现在写成 `auto` 而不是空串，按「补空字段」
-    /// 的规则它会永远填不进去。所以它按**意图**判断——只有当前意图是自动时才让环境变量
-    /// 覆盖，用户手选的具体档位不会被开发变量悄悄改掉。
+    /// 的规则它会永远填不进去。所以它按**意图**与**来源**判断——只有当前未被用户显式
+    /// 选择且意图是自动时才让环境变量覆盖（标记为 `Derived`），用户手选的具体档位或明确选的「自动」不会被开发变量悄悄改掉。
     pub fn merged_with_env(mut self) -> Self {
         let pairs = [
             ("SODA_COOKIE", &mut self.cookie),
@@ -531,10 +531,13 @@ impl Settings {
                 }
             }
         }
-        if self.quality_intent() == crate::quality::QualityIntent::Auto {
+        if self.quality_source != crate::quality::QualitySource::User
+            && self.quality_intent() == crate::quality::QualityIntent::Auto
+        {
             if let Ok(value) = std::env::var("SODAM_QUALITY") {
                 if !value.trim().is_empty() {
                     self.quality = value.trim().to_string();
+                    self.quality_source = crate::quality::QualitySource::Derived;
                 }
             }
         }
@@ -807,7 +810,7 @@ mod tests {
         assert_eq!(settings.quality_source(), QualitySource::Unknown);
 
         // 用户手动设置音质后记为 User
-        settings.set_quality_intent(&QualityIntent::Tier("lossless".into()));
+        settings.set_quality_intent_by_user(&QualityIntent::Tier("lossless".into()));
         assert_eq!(settings.quality_source(), QualitySource::User);
         settings.save_to(&path).expect("save");
 
@@ -858,6 +861,34 @@ mod tests {
         let fallback = Settings::load_from(&path);
         assert_eq!(fallback.quality, "medium");
         assert_eq!(fallback.quality_source(), QualitySource::Unknown);
+    }
+
+    /// 环境变量注入音质偏好：未手选时覆盖并标记为 Derived；用户手选后不再被覆盖。
+    #[test]
+    fn env_quality_override_records_derived_source_and_respects_user_choice() {
+        use crate::quality::{QualityIntent, QualitySource};
+
+        struct EnvGuard(&'static str);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                std::env::remove_var(self.0);
+            }
+        }
+
+        let env_key = "SODAM_QUALITY";
+        let _guard = EnvGuard(env_key);
+        std::env::set_var(env_key, "lossless");
+        let merged = Settings::default().merged_with_env();
+        assert_eq!(merged.quality, "lossless");
+        assert_eq!(merged.quality_source(), QualitySource::Derived);
+
+        // 用户手选了档位（包括手选「自动」）时，环境变量不能覆盖用户的选择
+        let mut user_picked = Settings::default();
+        user_picked.set_quality_intent_by_user(&QualityIntent::Auto);
+        assert_eq!(user_picked.quality_source(), QualitySource::User);
+        let user_merged = user_picked.merged_with_env();
+        assert_eq!(user_merged.quality, "auto");
+        assert_eq!(user_merged.quality_source(), QualitySource::User);
     }
 
     /// 详细日志：新配置默认关闭，旧配置缺字段也能读。

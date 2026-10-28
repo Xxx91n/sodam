@@ -297,7 +297,6 @@ impl Language {
             "当前档位由程序推导，点「自动」即可恢复跟随账号权益" => {
                 "Current tier was automatically derived; pick Auto to follow your account again"
             }
-            "当前档位由程序推导" => "Current tier was automatically derived",
             "当前档位由手动选择" => "Current tier was manually selected",
             "手动选择" => "Manual",
             "程序推导" => "Derived",
@@ -864,5 +863,23 @@ mod tests {
             "英文词典缺少这些 key：\n{}",
             missing.join("\n")
         );
+    }
+
+    /// 确保 sodam-core 中 QualitySource 的所有标签在词典中都有英文翻译，杜绝核心层与 UI 词典漂移。
+    #[test]
+    fn quality_source_label_keys_have_english_entries() {
+        use sodam_core::quality::QualitySource;
+        for source in [
+            QualitySource::Unknown,
+            QualitySource::User,
+            QualitySource::Derived,
+        ] {
+            assert!(
+                Language::english_text(source.label_key()).is_some(),
+                "英文词典缺少 QualitySource::{} 的翻译：{}",
+                source.as_str(),
+                source.label_key()
+            );
+        }
     }
 }

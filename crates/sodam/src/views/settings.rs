@@ -536,13 +536,6 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
     // 在全新未配置的「自动」项上（Unknown + Auto）不展示徽章，避免新用户误解。
     let (source_badge, source_hint) =
         match (root.settings.quality_source, root.settings.quality_intent()) {
-            (
-                sodam_core::quality::QualitySource::Derived,
-                sodam_core::quality::QualityIntent::Auto,
-            ) => (
-                Some(root.tr("程序推导")),
-                Some(root.tr("当前档位由程序推导")),
-            ),
             (sodam_core::quality::QualitySource::Derived, _) => (
                 Some(root.tr("程序推导")),
                 Some(root.tr("当前档位由程序推导，点「自动」即可恢复跟随账号权益")),

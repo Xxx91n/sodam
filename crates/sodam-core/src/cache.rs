@@ -747,9 +747,12 @@ mod tests {
             actual_rank: Some(20),
             file_size: 4 * 1024 * 1024,
         };
-        // low 标签上限为 20，不允许升级至 100 或 50
+        // low 标签上限为 50，不允许越级升级至 100（无损）或 80（极高）
         assert!(!low_record.is_upgradeable_to(100));
-        assert!(!low_record.is_upgradeable_to(50));
+        assert!(!low_record.is_upgradeable_to(80));
+        // 目标为 50 且实际为 20 时，在 low 上限内，允许升级至 50
+        assert!(low_record.is_upgradeable_to(50));
+        // 目标为 20 时实际已达 20，不允许升级
         assert!(!low_record.is_upgradeable_to(20));
 
         let lossless_downgraded = CachedAudioRecord {

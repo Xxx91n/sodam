@@ -323,6 +323,10 @@ impl Session {
         let path = dir.join(format!("{0}-{tag}.m4a", track.id));
         // sidecar 记录「音质标签 + 实际字节数 + 是否试听」，用于命中时的大小校验。
         let quality_path = dir.join(format!("{0}-{tag}.quality", track.id));
+        // 快速路径：若当前已有有效缓存命中，直接返回，无需排队等待锁
+        if let Some(cached) = self.cached_track(&track.id) {
+            return Ok(cached);
+        }
         let download_lock = crate::cache::download_lock(&path);
         let _writer = download_lock.lock().unwrap_or_else(|err| err.into_inner());
         if let Some(cached) = self.cached_track(&track.id) {
@@ -450,15 +454,31 @@ impl Session {
 
         let default_intent = self.settings.quality_intent();
         let intent = target_intent.unwrap_or(&default_intent);
+        // 若为明确指定的 Tier，target_rank 不需要 VIP，避免冗余网络请求
+        let vip = match intent {
+            crate::quality::QualityIntent::Tier(_) => None,
+            _ => self.is_vip().ok(),
+        };
+
         // 如果已有档位并不低于目标档位，直接复用已有缓存
-        if !crate::quality::is_tier_below_selected(current.quality_rank, intent, self.is_vip().ok())
-        {
+        if !crate::quality::is_tier_below_selected(current.quality_rank, intent, vip) {
             return Ok(current);
         }
 
-        // 串行化写操作并获取租约（旧缓存与临时新文件均受保护）
-        let download_lock = crate::cache::download_lock(&path);
-        let _writer = download_lock.lock().unwrap_or_else(|err| err.into_inner());
+        // 串行化升级操作并获取租约：
+        // 升级使用独立锁，不与普通点播播放竞争同把锁，确保升级进行中同一曲目重播秒开
+        let upgrade_lock = crate::cache::download_lock(&path.with_extension("upgrade-lock"));
+        let _writer = upgrade_lock.lock().unwrap_or_else(|err| err.into_inner());
+
+        // 获取锁后重读当前缓存，防止并发升级已将其提升
+        let current = match self.cached_track(&track.id) {
+            Some(c) => c,
+            None => return Ok(current),
+        };
+        if !crate::quality::is_tier_below_selected(current.quality_rank, intent, vip) {
+            return Ok(current);
+        }
+
         let target_lease = crate::cache::CacheLease::acquire(&path);
 
         let song = libresoda::Song {
@@ -502,6 +522,12 @@ impl Session {
                     info.size
                 ),
             ));
+        }
+
+        // 核心安全护栏：试听流绝不允许覆盖已有非试听整曲缓存（即便试听流档位分数更高）
+        if info.is_preview && !current.preview {
+            let _ = std::fs::remove_file(&part);
+            return Ok(current);
         }
 
         let new_rank = crate::quality::stream_rank(&info);

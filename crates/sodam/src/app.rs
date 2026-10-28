@@ -212,7 +212,6 @@ pub struct TrackMenu {
     pub position: gpui::Point<gpui::Pixels>,
 }
 
-/// 根视图状态。
 /// 批量升级进度（完成数与总数）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct BatchUpgradeProgress {
@@ -220,6 +219,7 @@ pub(crate) struct BatchUpgradeProgress {
     pub(crate) total: usize,
 }
 
+/// 根视图状态。
 pub struct Root {
     pub nav: Nav,
     /// 自绘标题栏拖拽区的按下锚点：按下只记录，移动超过阈值才交给合成器，

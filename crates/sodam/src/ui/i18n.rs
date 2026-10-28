@@ -482,6 +482,9 @@ impl Language {
             "批量升级" => "Batch Upgrade",
             "正在升级…" => "Upgrading…",
             "缓存升级完成：共升级 {} 首歌曲" => "Cache upgrade complete: upgraded {} songs",
+            "缓存升级完成：成功升级 {} 首，{} 首跳过或无更高档位" => {
+                "Cache upgrade complete: upgraded {} songs, {} skipped or no higher quality"
+            }
             "诊断日志" => "Diagnostic Logs",
             "默认记录在本机，用于排查播放问题；「清空缓存」不会删除它们" => {
                 "Stored on this device to help diagnose playback problems; Clear Cache never removes them"

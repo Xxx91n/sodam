@@ -175,7 +175,7 @@ pub fn trim_audio(limit_mb: u64) -> u64 {
 /// 解析音频缓存主文件名 stem，分离出 `(track_id, quality_tag)`。
 /// 文件名格式形如 `{track_id}-{quality_tag}`（如 `7427204361343191057-auto`）。
 pub fn parse_audio_cache_stem(stem: &str) -> Option<(String, String)> {
-    let (track_id, tag) = stem.rsplit_once('-')?;
+    let (track_id, tag) = stem.split_once('-')?;
     if track_id.is_empty() || tag.is_empty() {
         return None;
     }
@@ -319,7 +319,8 @@ pub fn estimate_upgrade(records: &[CachedAudioRecord], target_rank: i64) -> Upgr
     let single_est = estimated_single_track_bytes(target_rank);
 
     for record in records {
-        if record.is_below_target(target_rank) {
+        // 试听片段不计入可升级整曲
+        if !record.preview && record.is_below_target(target_rank) {
             count += 1;
             current_bytes = current_bytes.saturating_add(record.file_size);
             estimated_new_bytes = estimated_new_bytes.saturating_add(single_est);
@@ -348,14 +349,18 @@ pub fn atomic_replace_cache(
             "part file does not exist",
         ));
     }
-    // 1. 写临时 sidecar 文件
+    // 1. 写临时 sidecar 文件，并清理可能遗留的旧临时/备份文件
     let tmp_sidecar = sidecar_path.with_extension("quality.tmp");
+    let backup_path = target_path.with_extension("m4a.old");
+    let backup_sidecar = sidecar_path.with_extension("quality.old");
+    let _ = std::fs::remove_file(&tmp_sidecar);
+    let _ = std::fs::remove_file(&backup_path);
+    let _ = std::fs::remove_file(&backup_sidecar);
+
     std::fs::write(&tmp_sidecar, sidecar_content)?;
 
     // 2. 备份现有 sidecar 与音频文件（在 Windows 上若目标存在，rename 不会直接覆盖；
     // 且若中途失败需完整回滚，避免留下「音频已换但 sidecar 是旧的」导致校验失败）。
-    let backup_path = target_path.with_extension("m4a.old");
-    let backup_sidecar = sidecar_path.with_extension("quality.old");
     let has_target = target_path.exists();
     let has_sidecar = sidecar_path.exists();
 
@@ -664,6 +669,72 @@ mod tests {
         // 临时文件被删除后，缓存占用归零
         std::fs::remove_file(&part).unwrap();
         assert_eq!(trim_audio_in(dir.path(), 0), 0);
+    }
+
+    #[test]
+    fn parse_audio_cache_stem_handles_tags_with_dashes() {
+        assert_eq!(
+            parse_audio_cache_stem("7427204361343191057-hi-res"),
+            Some(("7427204361343191057".to_string(), "hi-res".to_string()))
+        );
+        assert_eq!(
+            parse_audio_cache_stem("7427204361343191057-auto"),
+            Some(("7427204361343191057".to_string(), "auto".to_string()))
+        );
+        assert_eq!(parse_audio_cache_stem("invalid"), None);
+    }
+
+    #[test]
+    fn estimate_upgrade_ignores_previews() {
+        let records = vec![
+            CachedAudioRecord {
+                track_id: "1".into(),
+                quality_tag: "auto".into(),
+                path: PathBuf::from("1-auto.m4a"),
+                quality_label: "标准 128k".into(),
+                preview: false,
+                actual_rank: Some(50),
+                file_size: 4 * 1024 * 1024,
+            },
+            CachedAudioRecord {
+                track_id: "2".into(),
+                quality_tag: "auto".into(),
+                path: PathBuf::from("2-auto.m4a"),
+                quality_label: "试听 128k".into(),
+                preview: true,
+                actual_rank: Some(50),
+                file_size: 1 * 1024 * 1024,
+            },
+        ];
+        let est = estimate_upgrade(&records, 100);
+        // preview 试听文件不应被计入升级
+        assert_eq!(est.upgradeable_count, 1);
+        assert_eq!(est.current_bytes, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn atomic_replace_cleans_leftover_backups_at_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("song-auto.m4a");
+        let sidecar = dir.path().join("song-auto.quality");
+        let leftover_backup = dir.path().join("song-auto.m4a.old");
+        let leftover_sidecar = dir.path().join("song-auto.quality.old");
+        let leftover_tmp = dir.path().join("song-auto.quality.tmp");
+        std::fs::write(&target, b"original-content").unwrap();
+        std::fs::write(&sidecar, "标准 128k\t16\t0\t50").unwrap();
+        std::fs::write(&leftover_backup, b"stale-backup").unwrap();
+        std::fs::write(&leftover_sidecar, b"stale-sidecar").unwrap();
+        std::fs::write(&leftover_tmp, b"stale-tmp").unwrap();
+
+        let part = dir.path().join("song-auto.part");
+        std::fs::write(&part, b"new-content").unwrap();
+
+        let res = atomic_replace_cache(&part, &target, &sidecar, "无损 871k\t11\t0\t100");
+        assert!(res.is_ok());
+        assert_eq!(std::fs::read(&target).unwrap(), b"new-content");
+        assert!(!leftover_backup.exists());
+        assert!(!leftover_sidecar.exists());
+        assert!(!leftover_tmp.exists());
     }
 
     #[cfg(unix)]

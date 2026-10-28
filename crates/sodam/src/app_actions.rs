@@ -1985,7 +1985,14 @@ impl Root {
     pub(crate) fn refresh_upgrade_estimate(&mut self, cx: &mut Context<Self>) {
         let target_intent = self.batch_upgrade_target.clone();
         let is_vip = self.account.as_ref().map(|a| a.vip);
-        let target_rank = sodam_core::quality::target_rank(&target_intent, is_vip).unwrap_or(100);
+        let target_rank = match sodam_core::quality::target_rank(&target_intent, is_vip) {
+            Some(rank) => rank,
+            None => {
+                self.batch_upgrade_estimate = None;
+                cx.notify();
+                return;
+            }
+        };
         let work = cx.background_spawn(async move {
             let dir = sodam_core::audio::cache_dir();
             let records = sodam_core::cache::list_cached_audio(&dir);
@@ -2072,15 +2079,22 @@ impl Root {
         let settings = self.settings.clone();
         let target_intent = self.batch_upgrade_target.clone();
         let is_vip = self.account.as_ref().map(|a| a.vip);
-        let target_rank = sodam_core::quality::target_rank(&target_intent, is_vip).unwrap_or(100);
+        let target_rank = match sodam_core::quality::target_rank(&target_intent, is_vip) {
+            Some(rank) => rank,
+            None => {
+                self.batch_upgrading = false;
+                cx.notify();
+                return;
+            }
+        };
 
-        // 后台扫盘读取待升级记录，不阻塞主渲染线程
+        // 后台扫盘读取待升级记录（排除试听文件），不阻塞主渲染线程
         let scan_work = cx.background_spawn(async move {
             let dir = sodam_core::audio::cache_dir();
             let records = sodam_core::cache::list_cached_audio(&dir);
             records
                 .into_iter()
-                .filter(|r| r.is_below_target(target_rank))
+                .filter(|r| !r.preview && r.is_below_target(target_rank))
                 .collect::<Vec<_>>()
         });
 
@@ -2099,6 +2113,7 @@ impl Root {
             if total == 0 {
                 let _ = this.update(cx, |root, cx| {
                     root.batch_upgrading = false;
+                    root.refresh_upgrade_estimate(cx);
                     cx.notify();
                 });
                 return;
@@ -2122,7 +2137,10 @@ impl Root {
                     })
                     .await;
 
-                if upgrade_result.is_ok() {
+                // 只有档位确实提升才记为有效升级
+                let is_improved =
+                    matches!(&upgrade_result, Ok(c) if c.quality_rank > record.actual_rank);
+                if is_improved {
                     success_count += 1;
                 }
 
@@ -2141,10 +2159,21 @@ impl Root {
             let _ = this.update(cx, |root, cx| {
                 root.batch_upgrading = false;
                 root.refresh_cache_stats(cx);
-                let message = root.localized(
-                    "缓存升级完成：共升级 {} 首歌曲",
-                    &[success_count.to_string()],
-                );
+                root.refresh_upgrade_estimate(cx);
+                let message = if success_count == total {
+                    root.localized(
+                        "缓存升级完成：共升级 {} 首歌曲",
+                        &[success_count.to_string()],
+                    )
+                } else {
+                    root.localized(
+                        "缓存升级完成：成功升级 {} 首，{} 首跳过或无更高档位",
+                        &[
+                            success_count.to_string(),
+                            (total.saturating_sub(success_count)).to_string(),
+                        ],
+                    )
+                };
                 root.notify_success_once("batch-upgrade-complete", message);
                 cx.notify();
             });

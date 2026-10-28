@@ -2101,7 +2101,7 @@ impl Root {
             && is_vip == Some(false)
         {
             let warn = self.tr("无损音质需 VIP 会员权限");
-            self.notify_warn_once("batch-upgrade-vip", warn);
+            self.notify_warning_once("batch-upgrade-vip", warn);
             cx.notify();
             return;
         }

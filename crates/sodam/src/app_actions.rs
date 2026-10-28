@@ -19,7 +19,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{
-    status_label, LoginState, Nav, QueueOrigin, Root, REMOTE_TEXT, RETRY_TEXT, ROW_BATCH, SAVE_TEXT,
+    status_label, BatchUpgradeProgress, LoginState, Nav, QueueOrigin, Root, REMOTE_TEXT,
+    RETRY_TEXT, ROW_BATCH, SAVE_TEXT,
 };
 use sodam_core::queue::Queue;
 
@@ -2107,13 +2108,7 @@ impl Root {
             for (index, record) in upgradeables.into_iter().enumerate() {
                 let track = TrackItem {
                     id: record.track_id.clone(),
-                    title: String::new(),
-                    artist: String::new(),
-                    album: String::new(),
-                    cover: String::new(),
-                    duration_seconds: 0.0,
-                    source: String::new(),
-                    play_url: None,
+                    ..Default::default()
                 };
                 let mut settings_clone = settings.clone();
                 settings_clone.set_quality_intent(&sodam_core::quality::QualityIntent::parse(

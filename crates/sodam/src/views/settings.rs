@@ -999,7 +999,7 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                         .mt(px(theme::space::SM))
                         .child(
                             div()
-                                .text_size(theme::Text::Medium.size())
+                                .text_size(theme::Text::Large.size())
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .text_color(theme::text())
                                 .child(root.tr("批量升级缓存")),

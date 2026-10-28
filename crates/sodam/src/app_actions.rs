@@ -2001,8 +2001,10 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let estimate = work.await;
             let _ = this.update(cx, |root, cx| {
-                root.batch_upgrade_estimate = Some(estimate);
-                cx.notify();
+                if root.batch_upgrade_target == target_intent {
+                    root.batch_upgrade_estimate = Some(estimate);
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -2159,7 +2161,6 @@ impl Root {
             let _ = this.update(cx, |root, cx| {
                 root.batch_upgrading = false;
                 root.refresh_cache_stats(cx);
-                root.refresh_upgrade_estimate(cx);
                 let message = if success_count == total {
                     root.localized(
                         "缓存升级完成：共升级 {} 首歌曲",

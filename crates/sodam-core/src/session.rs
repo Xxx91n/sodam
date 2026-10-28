@@ -531,9 +531,10 @@ impl Session {
         }
 
         let new_rank = crate::quality::stream_rank(&info);
-        // 若新流档位并未高于旧档位（服务端暂无更高档位），丢弃临时文件，保留旧文件
+        // 若新流档位并未高于旧档位，且未发生「由试听升级为整曲」，丢弃临时文件，保留旧文件
         if let Some(old_rank) = current.quality_rank {
-            if new_rank <= old_rank {
+            let is_improved = new_rank > old_rank || (current.preview && !info.is_preview);
+            if !is_improved {
                 let _ = std::fs::remove_file(&part);
                 return Ok(current);
             }

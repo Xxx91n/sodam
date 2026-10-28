@@ -1048,12 +1048,14 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                                         .child(label)
                                         .on_click(cx.listener(
                                             move |root, _event: &ClickEvent, _window, cx| {
-                                                root.set_batch_upgrade_target(
-                                                    sodam_core::quality::QualityIntent::Tier(
-                                                        tier.to_string(),
-                                                    ),
-                                                    cx,
-                                                );
+                                                if !root.batch_upgrading {
+                                                    root.set_batch_upgrade_target(
+                                                        sodam_core::quality::QualityIntent::Tier(
+                                                            tier.to_string(),
+                                                        ),
+                                                        cx,
+                                                    );
+                                                }
                                             },
                                         ))
                                 }),

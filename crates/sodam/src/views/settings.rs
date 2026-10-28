@@ -1020,6 +1020,7 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                                     ("lossless", root.tr("无损")),
                                     ("highest", root.tr("极高")),
                                     ("medium", root.tr("较高")),
+                                    ("low", root.tr("标准")),
                                 ]
                                 .into_iter()
                                 .enumerate()
@@ -1063,8 +1064,8 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                                 root.localized(
                                     "正在升级 ({} / {})…",
                                     &[
-                                        root.batch_upgrade_progress.0.to_string(),
-                                        root.batch_upgrade_progress.1.to_string(),
+                                        root.batch_upgrade_progress.done.to_string(),
+                                        root.batch_upgrade_progress.total.to_string(),
                                     ],
                                 )
                             } else if let Some(estimate) = &root.batch_upgrade_estimate {

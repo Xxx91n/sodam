@@ -213,6 +213,13 @@ pub struct TrackMenu {
 }
 
 /// 根视图状态。
+/// 批量升级进度（完成数与总数）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct BatchUpgradeProgress {
+    pub(crate) done: usize,
+    pub(crate) total: usize,
+}
+
 pub struct Root {
     pub nav: Nav,
     /// 自绘标题栏拖拽区的按下锚点：按下只记录，移动超过阈值才交给合成器，
@@ -450,7 +457,9 @@ pub struct Root {
     pub(crate) batch_upgrade_target: sodam_core::quality::QualityIntent,
     pub(crate) batch_upgrade_estimate: Option<sodam_core::cache::UpgradeEstimate>,
     pub(crate) batch_upgrading: bool,
-    pub(crate) batch_upgrade_progress: (usize, usize),
+    pub(crate) batch_upgrade_progress: BatchUpgradeProgress,
+    /// 单曲后台缓存升级尝试记录（避免同一首低档曲目在切歌或重播时反复拉取升级）。
+    pub(crate) cache_upgrade_attempted: Arc<Mutex<HashSet<String>>>,
     /// 正在删除诊断日志；只用于禁用重复点击，与缓存清理互不影响。
     pub(crate) log_clearing: bool,
     /// 下载完成后交给音频线程的装载序号；避免同一曲目重载/失败时永久 loading。
@@ -679,7 +688,8 @@ impl Root {
             batch_upgrade_target: sodam_core::quality::QualityIntent::Tier("lossless".into()),
             batch_upgrade_estimate: None,
             batch_upgrading: false,
-            batch_upgrade_progress: (0, 0),
+            batch_upgrade_progress: BatchUpgradeProgress::default(),
+            cache_upgrade_attempted: Arc::new(Mutex::new(HashSet::new())),
             log_clearing: false,
             pending_engine_load: None,
             pending_track: None,

@@ -299,18 +299,15 @@ impl UpgradeEstimate {
 
 /// 估算目标档位单曲的平均字节数。
 pub fn estimated_single_track_bytes(target_rank: i64) -> u64 {
-    if target_rank >= 100 {
+    match crate::quality::tier_label(target_rank) {
         // 无损 FLAC 通常约 30-45 MB，取 35 MiB
-        35 * 1024 * 1024
-    } else if target_rank >= 80 {
+        "无损" => 35 * 1024 * 1024,
         // 极高 320k 通常约 8-12 MB，取 10 MiB
-        10 * 1024 * 1024
-    } else if target_rank >= 70 {
+        "极高" => 10 * 1024 * 1024,
         // 较高 通常约 5-8 MB，取 7 MiB
-        7 * 1024 * 1024
-    } else {
+        "较高" => 7 * 1024 * 1024,
         // 标准/低档 通常约 3-5 MB，取 4 MiB
-        4 * 1024 * 1024
+        _ => 4 * 1024 * 1024,
     }
 }
 
@@ -338,7 +335,7 @@ pub fn estimate_upgrade(records: &[CachedAudioRecord], target_rank: i64) -> Upgr
 }
 
 /// 将临时文件原子替换为正式缓存文件，并写入 sidecar。
-/// 中途失败不影响现有缓存文件，保持旧文件完好。
+/// 中途失败不影响现有缓存文件，保持旧文件完好（含回滚保护）。
 pub fn atomic_replace_cache(
     part_path: &Path,
     target_path: &Path,
@@ -355,37 +352,63 @@ pub fn atomic_replace_cache(
     let tmp_sidecar = sidecar_path.with_extension("quality.tmp");
     std::fs::write(&tmp_sidecar, sidecar_content)?;
 
-    // 2. 替换音频文件
-    // 在 Windows 上若目标存在，rename 不会直接覆盖；若正在被播放句柄读取，
-    // 先移到 .old 备份名，再把 part 移入目标。
+    // 2. 备份现有 sidecar 与音频文件（在 Windows 上若目标存在，rename 不会直接覆盖；
+    // 且若中途失败需完整回滚，避免留下「音频已换但 sidecar 是旧的」导致校验失败）。
     let backup_path = target_path.with_extension("m4a.old");
+    let backup_sidecar = sidecar_path.with_extension("quality.old");
     let has_target = target_path.exists();
-    if has_target {
-        let _ = std::fs::remove_file(&backup_path);
-        if let Err(err) = std::fs::rename(target_path, &backup_path) {
+    let has_sidecar = sidecar_path.exists();
+
+    if has_sidecar {
+        let _ = std::fs::remove_file(&backup_sidecar);
+        if let Err(err) = std::fs::rename(sidecar_path, &backup_sidecar) {
             let _ = std::fs::remove_file(&tmp_sidecar);
             return Err(err);
         }
     }
 
+    if has_target {
+        let _ = std::fs::remove_file(&backup_path);
+        if let Err(err) = std::fs::rename(target_path, &backup_path) {
+            if has_sidecar {
+                let _ = std::fs::rename(&backup_sidecar, sidecar_path);
+            }
+            let _ = std::fs::remove_file(&tmp_sidecar);
+            return Err(err);
+        }
+    }
+
+    // 3. 移入新音频文件
     if let Err(err) = std::fs::rename(part_path, target_path) {
-        // 还原备份文件
         if has_target {
             let _ = std::fs::rename(&backup_path, target_path);
+        }
+        if has_sidecar {
+            let _ = std::fs::rename(&backup_sidecar, sidecar_path);
         }
         let _ = std::fs::remove_file(&tmp_sidecar);
         return Err(err);
     }
 
-    // 3. 替换 sidecar
+    // 4. 移入新 sidecar
     if let Err(err) = std::fs::rename(&tmp_sidecar, sidecar_path) {
+        if has_target {
+            let _ = std::fs::remove_file(target_path);
+            let _ = std::fs::rename(&backup_path, target_path);
+        }
+        if has_sidecar {
+            let _ = std::fs::rename(&backup_sidecar, sidecar_path);
+        }
         let _ = std::fs::remove_file(&tmp_sidecar);
         return Err(err);
     }
 
-    // 4. 清理旧备份文件（若仍被播放锁定删不掉，不影响新缓存已替换生效）
+    // 5. 替换成功：清理旧备份文件
     if has_target {
         let _ = std::fs::remove_file(&backup_path);
+    }
+    if has_sidecar {
+        let _ = std::fs::remove_file(&backup_sidecar);
     }
     Ok(())
 }

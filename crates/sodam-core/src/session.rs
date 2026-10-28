@@ -131,6 +131,13 @@ pub struct CachedTrack {
     pub(crate) lease: crate::cache::CacheLease,
 }
 
+impl CachedTrack {
+    /// 实际档位对应的显示名（如 "无损"、"极高"、"较高"、"标准"；未知返回 None）。
+    pub fn actual_tier(&self) -> Option<&'static str> {
+        self.quality_rank.map(crate::quality::tier_label)
+    }
+}
+
 /// 把 `DownloadInfo` 翻成界面用的音质标签（以**实际拉到的流**为准）。
 ///
 /// 档位名走 [`crate::quality::tier_label`]，与降档判定共用 libresoda 的那套刻度；
@@ -428,10 +435,17 @@ impl Session {
         let path = dir.join(format!("{0}-{tag}.m4a", track.id));
         let quality_path = dir.join(format!("{0}-{tag}.quality", track.id));
 
-        // 若本地缓存原本就不存在，直接走标准下载
+        // 若本地缓存原本就不存在，拒绝升级（升级只针对已有缓存曲目）
         let current = match self.cached_track(&track.id) {
             Some(c) => c,
-            None => return self.download_to_cache(track),
+            None => {
+                return Err(classify(
+                    Stage::Input,
+                    "track is not in local cache",
+                    Retryability::NonRetryable,
+                    RecoveryAction::None,
+                ));
+            }
         };
 
         let default_intent = self.settings.quality_intent();

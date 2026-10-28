@@ -553,6 +553,9 @@ impl Root {
                 if let Ok(mut tried) = root.original_cover_attempted.lock() {
                     tried.clear();
                 }
+                if let Ok(mut tried) = root.cache_upgrade_attempted.lock() {
+                    tried.clear();
+                }
                 root.cover_pool.seen.clear();
                 let message = root.localized("已清理缓存：{} 个文件", &[removed.to_string()]);
                 root.notify_success_once("cache-clear", message);
@@ -2015,6 +2018,14 @@ impl Root {
         intent: sodam_core::quality::QualityIntent,
         cx: &mut Context<Self>,
     ) {
+        let key = format!("{}:{}", track.id, intent.as_setting());
+        if let Ok(mut attempted) = self.cache_upgrade_attempted.lock() {
+            if !attempted.insert(key) {
+                // 本次会话已尝试过升级该曲目到此档位，避免反复重试
+                return;
+            }
+        }
+
         let settings = self.settings.clone();
         let track_clone = track.clone();
         let work = cx.background_spawn(async move {
@@ -2054,7 +2065,7 @@ impl Root {
             return;
         }
         self.batch_upgrading = true;
-        self.batch_upgrade_progress = (0, 0);
+        self.batch_upgrade_progress = BatchUpgradeProgress::default();
         cx.notify();
 
         let settings = self.settings.clone();
@@ -2062,19 +2073,27 @@ impl Root {
         let is_vip = self.account.as_ref().map(|a| a.vip);
         let target_rank = sodam_core::quality::target_rank(&target_intent, is_vip).unwrap_or(100);
 
-        cx.spawn(async move |this, cx| {
+        // 后台扫盘读取待升级记录，不阻塞主渲染线程
+        let scan_work = cx.background_spawn(async move {
             let dir = sodam_core::audio::cache_dir();
             let records = sodam_core::cache::list_cached_audio(&dir);
-            let upgradeables: Vec<_> = records
+            records
                 .into_iter()
                 .filter(|r| r.is_below_target(target_rank))
-                .collect();
+                .collect::<Vec<_>>()
+        });
+
+        cx.spawn(async move |this, cx| {
+            let upgradeables = scan_work.await;
             let total = upgradeables.len();
 
-            let _ = this.update(cx, |root, cx| {
-                root.batch_upgrade_progress = (0, total);
+            let update_res = this.update(cx, |root, cx| {
+                root.batch_upgrade_progress = BatchUpgradeProgress { done: 0, total };
                 cx.notify();
             });
+            if update_res.is_err() {
+                return;
+            }
 
             if total == 0 {
                 let _ = this.update(cx, |root, cx| {
@@ -2097,7 +2116,9 @@ impl Root {
                     play_url: None,
                 };
                 let mut settings_clone = settings.clone();
-                settings_clone.audio_quality = record.quality_tag.clone();
+                settings_clone.set_quality_intent(&sodam_core::quality::QualityIntent::parse(
+                    &record.quality_tag,
+                ));
                 let target_clone = target_intent.clone();
                 let upgrade_result = cx
                     .background_spawn(async move {
@@ -2110,10 +2131,16 @@ impl Root {
                     success_count += 1;
                 }
 
-                let _ = this.update(cx, |root, cx| {
-                    root.batch_upgrade_progress = (index + 1, total);
+                let update_res = this.update(cx, |root, cx| {
+                    root.batch_upgrade_progress = BatchUpgradeProgress {
+                        done: index + 1,
+                        total,
+                    };
                     cx.notify();
                 });
+                if update_res.is_err() {
+                    break;
+                }
             }
 
             let _ = this.update(cx, |root, cx| {
@@ -2797,19 +2824,21 @@ impl Root {
         // 总墙钟上限，否则等于把刚拆掉的「整首下载总时限」从另一侧装回来。
         let work = cx.background_spawn(async move {
             let session = Session::new(settings);
+            let was_cached = session.is_cached(&work_track.id);
             // 轨迹写在后台线程：开始 / 每次失败判定 / 最终成功或放弃各一行。
             // 永久失败只留一次尝试的记录，不会因为预算再打一次远程。
             let trace = PlaybackTrace::global(&work_track.id);
-            drive_play_attempt(
+            let result = drive_play_attempt(
                 PlayBudget::default(),
                 trace.as_ref(),
                 std::time::Instant::now(),
                 |_| session.download_to_cache(&work_track),
                 std::thread::sleep,
-            )
+            );
+            (result, was_cached)
         });
         cx.spawn(async move |this, cx| {
-            let result = work.await;
+            let (result, was_cached) = work.await;
             let _ = this.update(cx, |root, cx| {
                 // 这次加载已经被更新的播放请求取代 → 整个结果作废
                 if root.play_seq != request_seq {
@@ -2852,27 +2881,30 @@ impl Root {
                         // 走全局提示而不是 `status`：后者没有渲染（见 #40）。
                         let intent = root.settings.quality_intent();
                         let is_vip = root.account.as_ref().map(|a| a.vip);
-                        if sodam_core::quality::is_tier_below_selected(actual_rank, &intent, is_vip)
+                        if was_cached
+                            && sodam_core::quality::is_tier_below_selected(
+                                actual_rank,
+                                &intent,
+                                is_vip,
+                            )
                         {
-                            if sodam_core::quality::is_downgraded(&intent, actual_rank) {
-                                let message = root.localized(
-                                    "已降档：所选 {}，实际 {}",
-                                    &[
-                                        crate::ui::player_bar::quality_label(
-                                            intent.as_setting(),
-                                            root.language,
-                                        ),
-                                        crate::ui::player_bar::localized_quality(
-                                            actual_quality,
-                                            root.language,
-                                        ),
-                                    ],
-                                );
-                                root.notify_warning_once("quality-downgraded", message);
-                            } else {
-                                root.set_status("播放中：{}", std::slice::from_ref(&track.title));
-                            }
                             root.spawn_background_cache_upgrade(track.clone(), intent.clone(), cx);
+                        }
+                        if sodam_core::quality::is_downgraded(&intent, actual_rank) {
+                            let message = root.localized(
+                                "已降档：所选 {}，实际 {}",
+                                &[
+                                    crate::ui::player_bar::quality_label(
+                                        intent.as_setting(),
+                                        root.language,
+                                    ),
+                                    crate::ui::player_bar::localized_quality(
+                                        actual_quality,
+                                        root.language,
+                                    ),
+                                ],
+                            );
+                            root.notify_warning_once("quality-downgraded", message);
                         } else {
                             root.set_status("播放中：{}", std::slice::from_ref(&track.title));
                         }

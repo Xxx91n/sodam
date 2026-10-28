@@ -440,6 +440,8 @@ impl Session {
         // 详细日志同理：登录走 `apply_login_cookie` → `apply` 会把会话里的副本整体落盘，
         // 副本漏掉这一项就会把用户刚打开的开关写回 false，重启后失效。
         self.settings.detailed_logs = settings.detailed_logs;
+        self.settings.quality = settings.quality.clone();
+        self.settings.quality_source = settings.quality_source;
     }
 
     pub fn settings(&self) -> &Settings {
@@ -661,19 +663,25 @@ mod tests {
         );
     }
 
-    /// 登录会用会话里的副本整体落盘，所以偏好同步必须带上「详细日志」：
-    /// 漏掉它，「开详细日志 → 扫码登录」就把开关写回 false，重启后失效。
+    /// 登录会用会话里的副本整体落盘，所以偏好同步必须带上详细日志与音质偏好来源：
+    /// 漏掉它们，登录时就会把用户刚打开的开关或切换的音质来源覆盖回旧值。
     #[test]
-    fn playback_preferences_sync_carries_detailed_logs() {
+    fn playback_preferences_sync_carries_detailed_logs_and_quality_source() {
+        use crate::quality::QualitySource;
+
         let mut session = Session::new(Settings::default());
         let mut current = session.settings().clone();
         current.detailed_logs = true;
+        current.quality = "lossless".into();
+        current.quality_source = QualitySource::User;
         session.update_playback_preferences(&current);
 
         assert!(
             session.settings().detailed_logs,
             "同步后会话副本要带上用户刚打开的详细日志开关"
         );
+        assert_eq!(session.settings().quality, "lossless");
+        assert_eq!(session.settings().quality_source, QualitySource::User);
     }
 
     /// 缓存标签按意图取：自动与空串同一个文件，换档位就换路径。

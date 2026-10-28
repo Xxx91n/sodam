@@ -26,6 +26,9 @@ pub struct Settings {
     /// 空串是历史写法，按 `auto` 读；新写入一律写 `auto`。实际拿到哪一档由服务端按
     /// 账号权益与曲目可用性决定，不落盘（见 [`crate::quality`]）。
     pub quality: String,
+    /// 音质偏好来源：记录是用户选择（`user`）、程序推导（`derived`）还是旧配置未知（`unknown`）。
+    #[serde(default)]
+    pub quality_source: crate::quality::QualitySource,
     /// 当前音量与静音前音量（0..=1）。旧配置缺字段时沿用 100%。
     pub volume: f32,
     pub volume_before_mute: f32,
@@ -249,6 +252,7 @@ impl Default for Settings {
             // 只存意图，不存实际档位：新写入一律 auto，空串只作历史写法来读
             //（见 crate::quality）。不再按会员等级推导一个具体档位写回。
             quality: crate::quality::AUTO.to_string(),
+            quality_source: crate::quality::QualitySource::Unknown,
             volume: 1.0,
             volume_before_mute: 1.0,
             play_mode: crate::queue::PlayMode::default(),
@@ -468,9 +472,24 @@ impl Settings {
         crate::quality::QualityIntent::parse(&self.quality)
     }
 
-    /// 写入音质意图：只落意图，不落解析出来的实际档位。
+    /// 音质偏好来源。
+    pub fn quality_source(&self) -> crate::quality::QualitySource {
+        self.quality_source
+    }
+
+    /// 写入音质意图：只落意图，不落解析出来的实际档位。默认记录为用户手动选择。
     pub fn set_quality_intent(&mut self, intent: &crate::quality::QualityIntent) {
+        self.set_quality_intent_with_source(intent, crate::quality::QualitySource::User);
+    }
+
+    /// 写入音质意图并记录其来源（用户手动选择或程序推导）。
+    pub fn set_quality_intent_with_source(
+        &mut self,
+        intent: &crate::quality::QualityIntent,
+        source: crate::quality::QualitySource,
+    ) {
         self.quality = intent.as_setting().to_string();
+        self.quality_source = source;
     }
 
     /// 生效的播放/暂停快捷键（配置为空时用内置默认值）。
@@ -776,35 +795,51 @@ mod tests {
         );
     }
 
-    /// 音质只存意图：写 `auto` 读回仍是 `auto`，旧文件的空串读成自动，且不做改写。
+    /// 音质只存意图并记录来源：用户选择落 `user`，推导落 `derived`，缺字段的旧配置读成未知。
     #[test]
-    fn quality_setting_round_trips_intent_without_rewriting_legacy_values() {
-        use crate::quality::QualityIntent;
+    fn quality_setting_records_source_and_preserves_legacy_configs() {
+        use crate::quality::{QualityIntent, QualitySource};
 
         let dir = tempfile::tempdir().expect("临时目录");
         let path = dir.path().join("config.json");
 
         let mut settings = Settings::default();
-        settings.set_quality_intent(&QualityIntent::Auto);
-        settings.save_to(&path).expect("save");
-        assert_eq!(
-            Settings::load_from(&path).quality,
-            "auto",
-            "自动要落成 auto 这一种写法"
-        );
+        assert_eq!(settings.quality_source(), QualitySource::Unknown);
 
-        // 旧配置里的空串：读成自动，但文件内容原样保留（我们不猜它是不是用户选的）
+        // 用户手动设置音质后记为 User
+        settings.set_quality_intent(&QualityIntent::Tier("lossless".into()));
+        assert_eq!(settings.quality_source(), QualitySource::User);
+        settings.save_to(&path).expect("save");
+
+        let loaded = Settings::load_from(&path);
+        assert_eq!(loaded.quality, "lossless");
+        assert_eq!(loaded.quality_source(), QualitySource::User);
+
+        // 程序推导设定音质后记为 Derived
+        settings.set_quality_intent_with_source(
+            &QualityIntent::Tier("highest".into()),
+            QualitySource::Derived,
+        );
+        assert_eq!(settings.quality_source(), QualitySource::Derived);
+        settings.save_to(&path).expect("save");
+
+        let loaded_derived = Settings::load_from(&path);
+        assert_eq!(loaded_derived.quality, "highest");
+        assert_eq!(loaded_derived.quality_source(), QualitySource::Derived);
+
+        // 旧配置里的空串：读成自动，来源为未知，且文件不被无故改写
         std::fs::write(&path, r#"{"quality":""}"#).expect("写入旧配置");
         let legacy = Settings::load_from(&path);
         assert_eq!(legacy.quality, "");
         assert_eq!(legacy.quality_intent(), QualityIntent::Auto);
+        assert_eq!(legacy.quality_source(), QualitySource::Unknown);
         assert_eq!(
             std::fs::read_to_string(&path).expect("读回"),
             r#"{"quality":""}"#,
             "没有别的迁移时不应改写文件"
         );
 
-        // 用户（或旧版本）写的具体档位一律不动
+        // 缺来源字段的具体档位旧配置：正常读取，来源为未知
         std::fs::write(&path, r#"{"quality":"lossless"}"#).expect("写入旧配置");
         let kept = Settings::load_from(&path);
         assert_eq!(kept.quality, "lossless");
@@ -812,6 +847,17 @@ mod tests {
             kept.quality_intent(),
             QualityIntent::Tier("lossless".into())
         );
+        assert_eq!(kept.quality_source(), QualitySource::Unknown);
+
+        // 包含未知来源字符串的旧配置：容错回退为未知，不破坏整份配置解析
+        std::fs::write(
+            &path,
+            r#"{"quality":"medium","quality_source":"unrecognized"}"#,
+        )
+        .expect("写入配置");
+        let fallback = Settings::load_from(&path);
+        assert_eq!(fallback.quality, "medium");
+        assert_eq!(fallback.quality_source(), QualitySource::Unknown);
     }
 
     /// 详细日志：新配置默认关闭，旧配置缺字段也能读。

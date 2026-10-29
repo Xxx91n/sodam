@@ -403,7 +403,7 @@ impl Root {
     /// 当前这首不重载：中途断开已取到的流不划算，也与主流客户端一致。
     pub fn set_quality(&mut self, quality: &str, cx: &mut Context<Self>) {
         let intent = sodam_core::quality::QualityIntent::parse(quality);
-        self.settings.set_quality_intent(&intent);
+        self.settings.set_quality_intent_by_user(&intent);
         if let Err(err) = self.settings.save() {
             let message = self.failure_text("保存音质设置失败", &err, SAVE_TEXT);
             self.notify_error_once("quality-save-failed", message);

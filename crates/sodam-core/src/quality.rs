@@ -11,6 +11,57 @@
 //! 取流时的筛选就发生在那边，界面若另算一套，两边迟早会对同一个文件给出不同结论。
 
 use libresoda::soda::quality::{preference_rank, quality_rank};
+use serde::{Deserialize, Serialize};
+
+/// 音质偏好来源：记录档位由谁决定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QualitySource {
+    /// 用户在设置页或播放条上手动选择。
+    User,
+    /// 程序推导写入。
+    Derived,
+    /// 未知（旧配置未记录来源，按「可能是任一种」处理）。
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl QualitySource {
+    /// 「来源未知」在 i18n 词典中的稳定 key。
+    pub const LABEL_UNKNOWN: &'static str = "来源未知";
+    /// 「手动选择」在 i18n 词典中的稳定 key。
+    pub const LABEL_USER: &'static str = "手动选择";
+    /// 「程序推导」在 i18n 词典中的稳定 key。
+    pub const LABEL_DERIVED: &'static str = "程序推导";
+
+    /// 来源在配置中的原始字符串表示。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::User => "user",
+            Self::Derived => "derived",
+        }
+    }
+
+    /// 来源的稳定中文名（i18n 的 key）。
+    ///
+    /// 注：设置页视图为了配合 i18n 静态测试扫描器提取字面量，在 match 分支中显式
+    /// 调用了 `.tr("...")` 字面量；本方法保留给核心层及其他不需要字面量扫描的场景。
+    pub fn label_key(&self) -> &'static str {
+        match self {
+            Self::Unknown => Self::LABEL_UNKNOWN,
+            Self::User => Self::LABEL_USER,
+            Self::Derived => Self::LABEL_DERIVED,
+        }
+    }
+}
+
+impl std::fmt::Display for QualitySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
 
 /// 「自动」的存储写法。空串按它读，新写入一律写它。
 pub const AUTO: &str = "auto";
@@ -239,5 +290,51 @@ mod tests {
                 sample.bitrate
             );
         }
+    }
+
+    #[test]
+    fn quality_source_serde_and_fallback() {
+        assert_eq!(QualitySource::default(), QualitySource::Unknown);
+        assert_eq!(QualitySource::User.as_str(), "user");
+        assert_eq!(QualitySource::Derived.as_str(), "derived");
+        assert_eq!(QualitySource::Unknown.as_str(), "unknown");
+
+        // 正常序列化与反序列化
+        assert_eq!(
+            serde_json::to_string(&QualitySource::User).unwrap(),
+            "\"user\""
+        );
+        assert_eq!(
+            serde_json::to_string(&QualitySource::Derived).unwrap(),
+            "\"derived\""
+        );
+        assert_eq!(
+            serde_json::to_string(&QualitySource::Unknown).unwrap(),
+            "\"unknown\""
+        );
+
+        assert_eq!(
+            serde_json::from_str::<QualitySource>("\"user\"").unwrap(),
+            QualitySource::User
+        );
+        assert_eq!(
+            serde_json::from_str::<QualitySource>("\"derived\"").unwrap(),
+            QualitySource::Derived
+        );
+        assert_eq!(
+            serde_json::from_str::<QualitySource>("\"unknown\"").unwrap(),
+            QualitySource::Unknown
+        );
+
+        // 未知字符串安全回退为 Unknown，不导致反序列化失败
+        assert_eq!(
+            serde_json::from_str::<QualitySource>("\"legacy\"").unwrap(),
+            QualitySource::Unknown
+        );
+
+        // label_key 覆盖三种来源
+        assert_eq!(QualitySource::User.label_key(), "手动选择");
+        assert_eq!(QualitySource::Derived.label_key(), "程序推导");
+        assert_eq!(QualitySource::Unknown.label_key(), "来源未知");
     }
 }

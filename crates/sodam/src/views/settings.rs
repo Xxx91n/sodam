@@ -532,6 +532,28 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
     // 勾选的是**意图**；配置里的空串是历史写法，按「自动」显示。
     let current = root.settings.quality_intent().as_setting().to_string();
 
+    // 来源提示与徽章：区分用户手动选择、程序推导与未知来源。
+    // 在全新未配置的「自动」项上（Unknown + Auto）不展示徽章，避免新用户误解。
+    let (source_badge, source_hint) =
+        match (root.settings.quality_source, root.settings.quality_intent()) {
+            (sodam_core::quality::QualitySource::Derived, _) => (
+                Some(root.tr("程序推导")),
+                Some(root.tr("当前档位由程序推导，点「自动」即可恢复跟随账号权益")),
+            ),
+            (
+                sodam_core::quality::QualitySource::Unknown,
+                sodam_core::quality::QualityIntent::Auto,
+            ) => (None, None),
+            (sodam_core::quality::QualitySource::Unknown, _) => (
+                Some(root.tr("来源未知")),
+                Some(root.tr("若不是你选的，点「自动」即可恢复跟随账号权益")),
+            ),
+            (sodam_core::quality::QualitySource::User, _) => (
+                Some(root.tr("手动选择")),
+                Some(root.tr("当前档位由手动选择")),
+            ),
+        };
+
     let theme_rows: Vec<AnyElement> = [
         (None, root.tr("跟随系统")),
         (Some(ThemeKind::Dark), root.tr("深色")),
@@ -643,13 +665,34 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                         .flex_col()
                         .child(
                             div()
-                                .text_size(theme::Text::Body.size())
-                                .text_color(if chosen {
-                                    theme::text()
-                                } else {
-                                    theme::text_muted()
-                                })
-                                .child(title.clone()),
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(theme::space::SM))
+                                .child(
+                                    div()
+                                        .text_size(theme::Text::Body.size())
+                                        .text_color(if chosen {
+                                            theme::text()
+                                        } else {
+                                            theme::text_muted()
+                                        })
+                                        .child(title.clone()),
+                                )
+                                .when(chosen, |this| {
+                                    this.when_some(source_badge, |this, badge| {
+                                        this.child(
+                                            div()
+                                                .text_size(theme::Text::Tiny.size())
+                                                .text_color(theme::text_muted())
+                                                .px(px(6.0))
+                                                .py(px(1.0))
+                                                .rounded(px(theme::radius::PILL))
+                                                .bg(theme::surface_hover())
+                                                .child(badge),
+                                        )
+                                    })
+                                }),
                         )
                         .child(
                             div()
@@ -837,14 +880,12 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                             root.tr("自动 = 取当前账号能拿到的最高档，单曲没有该档位时自动降一档"),
                         ),
                 )
-                .child(
-                    // 旧版本按会员等级把「自动」写成了具体档位，盘上无法与手选区分，
-                    // 所以不重置、不改写，只给一句提示和回到「自动」的办法。
+                .children(source_hint.map(|hint| {
                     div()
                         .text_size(theme::Text::Tiny.size())
                         .text_color(theme::text_faint())
-                        .child(root.tr("若不是你选的，点「自动」即可恢复跟随账号权益")),
-                )
+                        .child(hint)
+                }))
                 .child(
                     // 缓存按意图命名：自动档下同一首歌永远命中同一个文件，所以权益变了
                     // 也不会在旧曲上生效。这是主流客户端的一致行为，必须提前说明。

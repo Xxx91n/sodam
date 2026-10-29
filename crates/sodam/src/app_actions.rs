@@ -404,7 +404,7 @@ impl Root {
     /// 当前这首不重载：中途断开已取到的流不划算，也与主流客户端一致。
     pub fn set_quality(&mut self, quality: &str, cx: &mut Context<Self>) {
         let intent = sodam_core::quality::QualityIntent::parse(quality);
-        self.settings.set_quality_intent(&intent);
+        self.settings.set_quality_intent_by_user(&intent);
         if let Err(err) = self.settings.save() {
             let message = self.failure_text("保存音质设置失败", &err, SAVE_TEXT);
             self.notify_error_once("quality-save-failed", message);
@@ -2158,9 +2158,12 @@ impl Root {
                     ..Default::default()
                 };
                 let mut settings_clone = settings.clone();
-                settings_clone.set_quality_intent(&sodam_core::quality::QualityIntent::parse(
-                    &record.quality_tag,
-                ));
+                // 这里只是为了一次性会话还原缓存文件自己的档位意图，不落盘，所以来源记为
+                // Derived（程序推导），不能冒充成用户的手动选择。
+                settings_clone.set_quality_intent_with_source(
+                    &sodam_core::quality::QualityIntent::parse(&record.quality_tag),
+                    sodam_core::quality::QualitySource::Derived,
+                );
                 let target_clone = target_intent.clone();
                 let upgrade_result = cx
                     .background_spawn(async move {

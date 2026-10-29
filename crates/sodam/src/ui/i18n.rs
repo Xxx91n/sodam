@@ -233,8 +233,8 @@ impl Language {
             "优先较高；没有可用档位时由服务端回退" => {
                 "Prefer medium; the service falls back when unavailable"
             }
-            "优先标准（≈128k）；没有可用档位时由服务端回退" => {
-                "Prefer standard (≈128k); the service falls back when unavailable"
+            "优先流畅（≈128k）；没有可用档位时由服务端回退" => {
+                "Prefer low (≈128k); the service falls back when unavailable"
             }
             "正在准备推荐队列…" => "Preparing recommendations…",
             "正在准备播放…" => "Preparing playback…",
@@ -324,7 +324,7 @@ impl Language {
             "无损" => "Lossless",
             "极高" => "High",
             "较高" => "Medium",
-            "标准" => "Low",
+            "流畅" => "Low",
             "省流" => "Data saver",
             "未知" => "Unknown",
             "缓存" => "Cache",

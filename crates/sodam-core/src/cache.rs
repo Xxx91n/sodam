@@ -187,6 +187,8 @@ pub fn parse_audio_cache_stem(stem: &str) -> Option<(String, String)> {
 ///
 /// 尺寸不符或档位为空一律返回 `None`。
 /// 第四个字段是实际档位分数，旧格式缺失时为 `None`。
+/// 旧缓存把 50 分档写作「标准」，这里按记录里的实际分数洗成当前显示名
+///（50 分档是「流畅」、更低分是「省流」），只换档位前缀、保留码率，旧文件不必重下。
 pub fn parse_sidecar(text: &str, actual: u64) -> Option<(String, bool, Option<i64>)> {
     let mut fields = text.split('\t');
     let quality = fields.next()?.trim().to_string();
@@ -201,7 +203,28 @@ pub fn parse_sidecar(text: &str, actual: u64) -> Option<(String, bool, Option<i6
     let rank = fields
         .next()
         .and_then(|value| value.trim().parse::<i64>().ok());
+    // 只改显示名，不动文件与分数：50 分档曾经叫「标准」，与 libresoda 的 standard(70) 撞名。
+    let quality = normalize_quality_label(&quality, rank);
     Some((quality, preview, rank))
+}
+
+/// 把旧 sidecar 里的档位名洗成当前显示名。
+///
+/// 有分数时按分数重写档位前缀（`标准 128k` + 50 → `流畅 128k`，+ 20 → `省流 96k` 同理），
+/// 这样旧缓存的徽章与新缓存的命名一致；没有分数（旧三字段记录）就只把撞名的「标准」
+/// 换成 50 分档的新名字，至少不再是 libresoda 的 `standard`(70)。
+fn normalize_quality_label(label: &str, rank: Option<i64>) -> String {
+    let Some(rank) = rank else {
+        return label.replace("标准", crate::quality::tier_label(50));
+    };
+    let tier = crate::quality::tier_label(rank);
+    // `TIER_LABELS` 已按长度从长到短排列；「标准」是历史写法，不在表里。
+    for known in crate::quality::TIER_LABELS.iter().copied().chain(["标准"]) {
+        if let Some(rest) = label.strip_prefix(known) {
+            return format!("{tier}{rest}");
+        }
+    }
+    label.to_string()
 }
 
 /// 本地缓存中的音频记录信息。
@@ -213,7 +236,7 @@ pub struct CachedAudioRecord {
     pub quality_tag: String,
     /// 音频文件本地绝对路径
     pub path: PathBuf,
-    /// 记录在 sidecar 的实际音质文本（如 "无损 871k" 或 "标准 128k"）
+    /// 记录在 sidecar 的实际音质文本（如 "无损 871k" 或 "流畅 128k"）
     pub quality_label: String,
     /// 是否为试听片段
     pub preview: bool,
@@ -237,7 +260,7 @@ impl CachedAudioRecord {
     /// 当前记录是否允许批量升级至目标档位。
     ///
     /// 排除试听片段、已达到或超过目标的记录；同时受该缓存文件自身的 quality_tag 意图上限约束：
-    /// 例如用户在省流模式下缓存的 `-low.m4a`（上限 20），不会被冲高为无损（100），
+    /// 例如用户在省流模式下缓存的 `-low.m4a`（上限 50），不会被冲高为无损（100），
     /// 以免后续省流播放时命中数十兆的庞大文件破坏省流意图。
     pub fn is_upgradeable_to(&self, target_rank: i64) -> bool {
         let within_cap = crate::quality::QualityIntent::parse(&self.quality_tag)
@@ -325,7 +348,7 @@ pub fn estimated_single_track_bytes(target_rank: i64) -> u64 {
         rank if rank >= 80 => 10 * MIB,
         // 较高 通常约 5-8 MB，取 7 MiB
         rank if rank >= 70 => 7 * MIB,
-        // 标准/低档 通常约 3-5 MB，取 4 MiB
+        // 流畅/低档 通常约 3-5 MB，取 4 MiB
         _ => 4 * MIB,
     }
 }
@@ -546,7 +569,7 @@ mod tests {
         );
         assert_eq!(parse_audio_cache_stem("invalid"), None);
 
-        // 标准4字段sidecar
+        // 标准格式的 4 字段 sidecar
         let sidecar = "无损 871k\t1024\t0\t100";
         assert_eq!(
             parse_sidecar(sidecar, 1024),
@@ -557,7 +580,8 @@ mod tests {
         let preview_sidecar = "标准 128k\t500\t1\t50";
         assert_eq!(
             parse_sidecar(preview_sidecar, 500),
-            Some(("标准 128k".into(), true, Some(50)))
+            Some(("流畅 128k".into(), true, Some(50))),
+            "旧缓存里的「标准」是 50 分档，读取时洗成「流畅」"
         );
 
         // 尺寸不符返回None
@@ -568,6 +592,26 @@ mod tests {
         assert_eq!(
             parse_sidecar(legacy_sidecar, 2000),
             Some(("极高 320k".into(), false, None))
+        );
+        // 没有分数时认不出具体档位，只把撞名的「标准」换成 50 分档的新名字。
+        assert_eq!(
+            parse_sidecar("标准 96k\t2000\t0", 2000),
+            Some(("流畅 96k".into(), false, None))
+        );
+
+        // 有分数就按分数洗：同一个旧「标准」在 50 分档叫流畅、在 20 分档叫省流。
+        assert_eq!(
+            parse_sidecar("标准 128k\t500\t0\t50", 500),
+            Some(("流畅 128k".into(), false, Some(50)))
+        );
+        assert_eq!(
+            parse_sidecar("标准 96k\t500\t0\t20", 500),
+            Some(("省流 96k".into(), false, Some(20)))
+        );
+        // 旧「Hi-Res 无损」在 100 分档要降级写成「无损」，前缀按长度从长到短匹配。
+        assert_eq!(
+            parse_sidecar("Hi-Res 无损 871k\t500\t0\t100", 500),
+            Some(("无损 871k".into(), false, Some(100)))
         );
     }
 
@@ -595,7 +639,7 @@ mod tests {
 
         let song1 = records.iter().find(|r| r.track_id == "song1").unwrap();
         assert_eq!(song1.actual_rank, Some(50));
-        assert_eq!(song1.actual_tier(), Some("标准"));
+        assert_eq!(song1.actual_tier(), Some("流畅"));
         assert!(song1.is_below_target(100));
         assert!(!song1.is_below_target(50));
 
@@ -614,7 +658,7 @@ mod tests {
             (35 * 1024 * 1024 - 1000) as i64
         );
 
-        // 目标为标准（50）：两者都已达到，没有可升级
+        // 目标为流畅（50）：两者都已达到，没有可升级
         let est_standard = estimate_upgrade(&records, 50);
         assert_eq!(est_standard.upgradeable_count, 0);
         assert_eq!(est_standard.current_bytes, 0);
@@ -710,7 +754,7 @@ mod tests {
                 track_id: "1".into(),
                 quality_tag: "auto".into(),
                 path: PathBuf::from("1-auto.m4a"),
-                quality_label: "标准 128k".into(),
+                quality_label: "流畅 128k".into(),
                 preview: false,
                 actual_rank: Some(50),
                 file_size: 4 * 1024 * 1024,
@@ -737,7 +781,7 @@ mod tests {
             track_id: "1".into(),
             quality_tag: "auto".into(),
             path: PathBuf::from("1-auto.m4a"),
-            quality_label: "标准 128k".into(),
+            quality_label: "流畅 128k".into(),
             preview: false,
             actual_rank: Some(50),
             file_size: 4 * 1024 * 1024,
@@ -749,7 +793,7 @@ mod tests {
             track_id: "2".into(),
             quality_tag: "low".into(),
             path: PathBuf::from("2-low.m4a"),
-            quality_label: "标准 128k".into(),
+            quality_label: "流畅 128k".into(),
             preview: false,
             actual_rank: Some(20),
             file_size: 4 * 1024 * 1024,

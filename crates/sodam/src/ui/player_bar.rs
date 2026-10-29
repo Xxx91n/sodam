@@ -269,7 +269,9 @@ pub(crate) fn localized_quality(raw: String, language: crate::ui::i18n::Language
             text = text.replace(label, translated);
         }
     }
-    text
+    // 旧缓存 sidecar 里 50 分档曾写作「标准」；按新名「流畅」的译法处理：
+    // 既不能在英文界面露出中文，也不能翻成 libresoda 的 Standard(70)。
+    text.replace("标准", language.text("流畅"))
 }
 
 /// 播放条的档位菜单：勾选的是**意图**，徽章上显示的是**实际**档位。
@@ -414,9 +416,12 @@ pub fn render(root: &Root, cx: &mut Context<Root>) -> impl IntoElement {
         quality.push_str(&format!(" · {}", root.tr("试听")));
     }
     // 降档：实际档位低于所选档位。每次现算——用户改了意图，旧结论就不该继续成立。
-    // 实际档位未知（旧缓存）或意图为「自动」时一律不算降档。
-    let downgraded =
-        sodam_core::quality::is_downgraded(&root.settings.quality_intent(), snapshot.quality_rank);
+    // 实际档位未知（旧缓存）或意图为「自动」时一律不算降档；两边显示名相同时也不徽章，
+    // 避免出现「降档·X」这种看起来没降的提示（分数拆档后真实降档都已不同名）。
+    let downgraded = sodam_core::quality::is_visible_downgrade(
+        &root.settings.quality_intent(),
+        snapshot.quality_rank,
+    );
     let title_link_track = track.as_ref().cloned();
     let artist_link_track = track.as_ref().cloned();
     let volume = root.settings.volume;

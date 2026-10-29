@@ -103,7 +103,8 @@ fn canonical_tier(value: &str) -> &str {
 
 impl QualityIntent {
     /// 从配置里的原始字符串解析。空串 / 空白 / `auto` / `best` → 自动；
-    /// 已知别名归一成菜单写法，未知档位按原样保留。
+    /// 已知别名归一成菜单写法（`standard` → `medium`，与 libresoda 的 70 分档一致），
+    /// 未知档位按原样保留。
     pub fn parse(raw: &str) -> Self {
         let value = raw.trim().to_ascii_lowercase();
         if value.is_empty() || value == AUTO || value == "best" {
@@ -167,7 +168,7 @@ impl QualityIntent {
                 "dolby" | "dolby_atmos" => Some("杜比全景声"),
                 "highest" | "hq" | "high" => Some("极高"),
                 "medium" | "standard" | "320k" => Some("较高"),
-                "low" | "128k" | "saver" => Some("标准"),
+                "low" | "128k" | "saver" => Some("流畅"),
                 _ => None,
             },
         }
@@ -185,10 +186,29 @@ pub fn is_downgraded(intent: &QualityIntent, actual: Option<i64>) -> bool {
     actual < max
 }
 
+/// 是否值得向用户显示降档提示。
+///
+/// 分数确实降了、但实际档位与所选档位落在同一个显示名时（例如所选「流畅」50、
+/// 实际 10/20 也显示「流畅」），照实说只会得到「所选 流畅，实际 流畅」。
+/// 这种提示读起来像没降档，干脆不显示；判定本身仍由 [`is_downgraded`] 负责，
+/// 不改变缓存升级等内部决策。
+pub fn is_visible_downgrade(intent: &QualityIntent, actual: Option<i64>) -> bool {
+    let Some(actual) = actual else {
+        return false;
+    };
+    if !is_downgraded(intent, Some(actual)) {
+        return false;
+    }
+    match intent.label_key() {
+        Some(selected) => selected != tier_label(actual),
+        None => true,
+    }
+}
+
 /// 获取音质意图在给定账号 VIP 状态下的目标档位分数。
 ///
 /// 具体档位返回其对应的分数（如 Hi-Res 110、无损 100、杜比 88、极高 80、
-/// 较高 70、标准 50）；「自动」在意图上不设上限，但在已知为 VIP 时目标为无损（100）。
+/// 较高 70、流畅 50）；「自动」在意图上不设上限，但在已知为 VIP 时目标为无损（100）。
 /// 若在「自动」下且非 VIP 或 VIP 状态未知，则返回 `None`（不指定确定目标）。
 pub fn target_rank(intent: &QualityIntent, is_vip: Option<bool>) -> Option<i64> {
     match intent {
@@ -249,7 +269,7 @@ pub fn stream_rank(info: &libresoda::soda::types::DownloadInfo) -> i64 {
 /// | 88..90 | 杜比全景声 | 杜比 / Atmos / Spatial 固定 88 |
 /// | 80..88 | 极高 | 极高 / HQ（80） |
 /// | 70..80 | 较高 | 较高 / 320k（70） |
-/// | 50..70 | 标准 | 标准与码率兜底 65 / 55（都比省流高） |
+/// | 50..70 | 流畅 | 50 分档与码率兜底 65 / 55；**不能叫「标准」**——那是 libresoda 意图的 70 分档 |
 /// | 1..50 | 省流 | 低码率兜底 20 / 10 |
 /// | 0 | 未知 | 没有可用信息 |
 ///
@@ -271,7 +291,7 @@ pub fn tier_label(rank: i64) -> &'static str {
     } else if rank >= 70 {
         "较高"
     } else if rank >= 50 {
-        "标准"
+        "流畅"
     } else if rank > 0 {
         "省流"
     } else {
@@ -290,7 +310,7 @@ pub const TIER_LABELS: [&str; 9] = [
     "无损",
     "极高",
     "较高",
-    "标准",
+    "流畅",
     "省流",
     "未知",
 ];
@@ -364,7 +384,7 @@ mod tests {
             ("dolby_atmos", "杜比全景声"),
             ("highest", "极高"),
             ("medium", "较高"),
-            ("low", "标准"),
+            ("low", "流畅"),
         ] {
             assert_eq!(
                 QualityIntent::parse(tier).label_key(),
@@ -373,6 +393,44 @@ mod tests {
             );
         }
         assert_eq!(QualityIntent::parse("ultra").label_key(), None);
+    }
+
+    /// 50 分档不能借用 libresoda 意图里的 `standard`（70）之名，否则降档提示会读反。
+    #[test]
+    fn low_tier_label_is_not_named_after_libresoda_standard() {
+        assert_eq!(preference_rank("standard"), Some(70));
+        assert_eq!(preference_rank("low"), Some(50));
+        assert_eq!(QualityIntent::parse("low").label_key(), Some("流畅"));
+        assert_eq!(tier_label(50), "流畅");
+        assert_eq!(tier_label(70), "较高");
+        assert_ne!(tier_label(50), "标准");
+        assert_eq!(
+            QualityIntent::parse("standard"),
+            QualityIntent::Tier("medium".into()),
+            "standard 与 medium 同属 70 分档，必须归一到同一行"
+        );
+        assert_eq!(QualityIntent::parse("standard").label_key(), Some("较高"));
+    }
+
+    /// 降档提示按显示名去重：分数降了但显示名相同就不提示。
+    ///
+    /// 合并 #85 的分数拆档后，表里已不存在「同名却判降档」的组合（50 分档叫流畅、
+    /// 更低分叫省流），所以真实降档都会提示；这条用例同时钉住「不降档不提示」与
+    /// 「显示名不同才提示」两个口径，将来改表时仍能抓住回归。
+    #[test]
+    fn visible_downgrade_follows_display_names() {
+        let low = QualityIntent::parse("low");
+        let medium = QualityIntent::parse("medium");
+        assert!(!is_visible_downgrade(&low, Some(50)), "同分不算降档");
+        assert_eq!(tier_label(20), "省流");
+        assert!(
+            is_visible_downgrade(&low, Some(20)),
+            "流畅 ≠ 省流，应当提示"
+        );
+        assert!(is_visible_downgrade(&medium, Some(50)));
+        assert!(!is_visible_downgrade(&medium, None));
+        assert!(!is_visible_downgrade(&QualityIntent::Auto, Some(10)));
+        assert!(is_downgraded(&low, Some(20)), "内部降档判定保持不变");
     }
 
     /// 菜单里的每一档都必须同时有分数与显示名，否则会出现能选却显示不出名字的档位。
@@ -509,7 +567,9 @@ mod tests {
             (info("dolby", "m4a", 320_000), "杜比全景声", true),
             (info("highest", "m4a", 320_000), "极高", true),
             (info("higher", "m4a", 320_000), "较高", true),
-            (info("standard", "m4a", 128_000), "标准", true),
+            // libresoda 把实际流里的 `standard` 评为 50（与意图 `standard`=70 不同），
+            // 显示名用 50 分档的「流畅」，不复用意图档的「标准」。
+            (info("standard", "m4a", 128_000), "流畅", true),
             (info("low", "m4a", 96_000), "省流", true),
             (info("", "m4a", 96_000), "省流", true),
             (info("", "m4a", 0), "未知", true),

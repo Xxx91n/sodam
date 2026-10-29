@@ -19,7 +19,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{
-    status_label, LoginState, Nav, QueueOrigin, Root, REMOTE_TEXT, RETRY_TEXT, ROW_BATCH, SAVE_TEXT,
+    status_label, BatchUpgradeProgress, LoginState, Nav, QueueOrigin, Root, REMOTE_TEXT,
+    RETRY_TEXT, ROW_BATCH, SAVE_TEXT,
 };
 use sodam_core::queue::Queue;
 
@@ -553,6 +554,10 @@ impl Root {
                 if let Ok(mut tried) = root.original_cover_attempted.lock() {
                     tried.clear();
                 }
+                if let Ok(mut tried) = root.cache_upgrade_attempted.lock() {
+                    tried.clear();
+                }
+                root.cache_upgrade_inflight.clear();
                 root.cover_pool.seen.clear();
                 let message = root.localized("已清理缓存：{} 个文件", &[removed.to_string()]);
                 root.notify_success_once("cache-clear", message);
@@ -1970,6 +1975,240 @@ impl Root {
             let stats = work.await;
             let _ = this.update(cx, |root, cx| {
                 root.cache_summary = stats;
+                root.refresh_upgrade_estimate(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// 刷新缓存批量升级预估信息（后台扫盘，不阻塞 UI）。
+    pub(crate) fn refresh_upgrade_estimate(&mut self, cx: &mut Context<Self>) {
+        let target_intent = self.batch_upgrade_target.clone();
+        let is_vip = self.account.as_ref().map(|a| a.vip);
+        let target_rank = match sodam_core::quality::target_rank(&target_intent, is_vip) {
+            Some(rank) => rank,
+            None => {
+                self.batch_upgrade_estimate = None;
+                cx.notify();
+                return;
+            }
+        };
+        let work = cx.background_spawn(async move {
+            let dir = sodam_core::audio::cache_dir();
+            let records = sodam_core::cache::list_cached_audio(&dir);
+            sodam_core::cache::estimate_upgrade(&records, target_rank)
+        });
+        cx.spawn(async move |this, cx| {
+            let estimate = work.await;
+            let _ = this.update(cx, |root, cx| {
+                if root.batch_upgrade_target == target_intent {
+                    root.batch_upgrade_estimate = Some(estimate);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// 切换批量升级的目标档位，并重新计算预估。
+    pub(crate) fn set_batch_upgrade_target(
+        &mut self,
+        intent: sodam_core::quality::QualityIntent,
+        cx: &mut Context<Self>,
+    ) {
+        self.batch_upgrade_target = intent;
+        self.refresh_upgrade_estimate(cx);
+        cx.notify();
+    }
+
+    /// 触发单首曲目的后台缓存升级（命中缓存但档位低于当前所选时）。
+    pub(crate) fn spawn_background_cache_upgrade(
+        &mut self,
+        track: TrackItem,
+        intent: sodam_core::quality::QualityIntent,
+        cx: &mut Context<Self>,
+    ) {
+        let max_inflight = prefetch_concurrency().max(1);
+        let key = format!("{}:{}", track.id, intent.as_setting());
+
+        // N2 并发上限保护（复用 prefetch_concurrency，避免连续切歌并发冲垮签名服务）
+        if self.cache_upgrade_inflight.len() >= max_inflight {
+            return;
+        }
+
+        if let Ok(mut attempted) = self.cache_upgrade_attempted.lock() {
+            if !attempted.insert(key.clone()) {
+                // 本次会话已尝试过升级该曲目到此档位，避免反复重试
+                return;
+            }
+        }
+
+        self.cache_upgrade_inflight.insert(key.clone());
+
+        let settings = self.settings.clone();
+        let track_clone = track.clone();
+        let work = cx.background_spawn(async move {
+            let session = Session::new(settings);
+            session.upgrade_cached_track(&track_clone, Some(&intent))
+        });
+        let key_clone = key;
+        let track_id = track.id.clone();
+        cx.spawn(async move |this, cx| {
+            let res = work.await;
+            let _ = this.update(cx, |root, _cx| {
+                root.cache_upgrade_inflight.remove(&key_clone);
+            });
+            match res {
+                Ok(cached) => {
+                    log_outlet::log_event(
+                        LogLevel::Info,
+                        LogTopic::Player,
+                        "cache_upgraded",
+                        &[
+                            ("track_id", track_id.as_str()),
+                            ("quality", cached.quality.as_str()),
+                        ],
+                    );
+                }
+                Err(failure) => {
+                    log_outlet::log_event(
+                        LogLevel::Debug,
+                        LogTopic::Player,
+                        "cache_upgrade_failed",
+                        &[
+                            ("track_id", track_id.as_str()),
+                            ("detail", failure.detail.as_str()),
+                        ],
+                    );
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// 执行已有缓存的批量升级任务。
+    pub(crate) fn start_batch_upgrade(&mut self, cx: &mut Context<Self>) {
+        if self.batch_upgrading {
+            return;
+        }
+
+        let target_intent = self.batch_upgrade_target.clone();
+        let is_vip = self.account.as_ref().map(|a| a.vip);
+
+        // P2 权益预检：非 VIP 选无损拦截
+        if target_intent == sodam_core::quality::QualityIntent::Tier("lossless".into())
+            && is_vip == Some(false)
+        {
+            let warn = self.tr("无损音质需 VIP 会员权限");
+            self.notify_warning_once("batch-upgrade-vip", warn);
+            cx.notify();
+            return;
+        }
+
+        self.batch_upgrading = true;
+        self.batch_upgrade_progress = BatchUpgradeProgress::default();
+        cx.notify();
+
+        let settings = self.settings.clone();
+        let target_rank = match sodam_core::quality::target_rank(&target_intent, is_vip) {
+            Some(rank) => rank,
+            None => {
+                self.batch_upgrading = false;
+                cx.notify();
+                return;
+            }
+        };
+
+        // 后台扫盘读取待升级记录（排除试听文件并遵循意图上限），不阻塞主渲染线程
+        let scan_work = cx.background_spawn(async move {
+            let dir = sodam_core::audio::cache_dir();
+            let records = sodam_core::cache::list_cached_audio(&dir);
+            records
+                .into_iter()
+                .filter(|r| r.is_upgradeable_to(target_rank))
+                .collect::<Vec<_>>()
+        });
+
+        cx.spawn(async move |this, cx| {
+            let upgradeables = scan_work.await;
+            let total = upgradeables.len();
+
+            let update_res = this.update(cx, |root, cx| {
+                root.batch_upgrade_progress = BatchUpgradeProgress { done: 0, total };
+                cx.notify();
+            });
+            if update_res.is_err() {
+                return;
+            }
+
+            if total == 0 {
+                let _ = this.update(cx, |root, cx| {
+                    root.batch_upgrading = false;
+                    root.refresh_upgrade_estimate(cx);
+                    cx.notify();
+                });
+                return;
+            }
+
+            let mut success_count = 0usize;
+            for (index, record) in upgradeables.into_iter().enumerate() {
+                let track = TrackItem {
+                    id: record.track_id.clone(),
+                    ..Default::default()
+                };
+                let mut settings_clone = settings.clone();
+                // 这里只是为了一次性会话还原缓存文件自己的档位意图，不落盘，所以来源记为
+                // Derived（程序推导），不能冒充成用户的手动选择。
+                settings_clone.set_quality_intent_with_source(
+                    &sodam_core::quality::QualityIntent::parse(&record.quality_tag),
+                    sodam_core::quality::QualitySource::Derived,
+                );
+                let target_clone = target_intent.clone();
+                let upgrade_result = cx
+                    .background_spawn(async move {
+                        let session = Session::new(settings_clone);
+                        session.upgrade_cached_track(&track, Some(&target_clone))
+                    })
+                    .await;
+
+                // 只有档位确实提升才记为有效升级
+                let is_improved =
+                    matches!(&upgrade_result, Ok(c) if c.quality_rank > record.actual_rank);
+                if is_improved {
+                    success_count += 1;
+                }
+
+                let update_res = this.update(cx, |root, cx| {
+                    root.batch_upgrade_progress = BatchUpgradeProgress {
+                        done: index + 1,
+                        total,
+                    };
+                    cx.notify();
+                });
+                if update_res.is_err() {
+                    break;
+                }
+            }
+
+            let _ = this.update(cx, |root, cx| {
+                root.batch_upgrading = false;
+                root.refresh_cache_stats(cx);
+                let message = if success_count == total {
+                    root.localized(
+                        "缓存升级完成：共升级 {} 首歌曲",
+                        &[success_count.to_string()],
+                    )
+                } else {
+                    root.localized(
+                        "缓存升级完成：成功升级 {} 首，{} 首跳过或无更高档位",
+                        &[
+                            success_count.to_string(),
+                            total.saturating_sub(success_count).to_string(),
+                        ],
+                    )
+                };
+                root.notify_success_once("batch-upgrade-complete", message);
                 cx.notify();
             });
         })
@@ -2643,19 +2882,21 @@ impl Root {
         // 总墙钟上限，否则等于把刚拆掉的「整首下载总时限」从另一侧装回来。
         let work = cx.background_spawn(async move {
             let session = Session::new(settings);
+            let was_cached = session.is_cached(&work_track.id);
             // 轨迹写在后台线程：开始 / 每次失败判定 / 最终成功或放弃各一行。
             // 永久失败只留一次尝试的记录，不会因为预算再打一次远程。
             let trace = PlaybackTrace::global(&work_track.id);
-            drive_play_attempt(
+            let result = drive_play_attempt(
                 PlayBudget::default(),
                 trace.as_ref(),
                 std::time::Instant::now(),
                 |_| session.download_to_cache(&work_track),
                 std::thread::sleep,
-            )
+            );
+            (result, was_cached)
         });
         cx.spawn(async move |this, cx| {
-            let result = work.await;
+            let (result, was_cached) = work.await;
             let _ = this.update(cx, |root, cx| {
                 // 这次加载已经被更新的播放请求取代 → 整个结果作废
                 if root.play_seq != request_seq {
@@ -2697,6 +2938,16 @@ impl Root {
                         // 实际档位标签由核心层按中文档位名生成，英文界面要过一遍翻译。
                         // 走全局提示而不是 `status`：后者没有渲染（见 #40）。
                         let intent = root.settings.quality_intent();
+                        let is_vip = root.account.as_ref().map(|a| a.vip);
+                        if was_cached
+                            && sodam_core::quality::is_tier_below_selected(
+                                actual_rank,
+                                &intent,
+                                is_vip,
+                            )
+                        {
+                            root.spawn_background_cache_upgrade(track.clone(), intent.clone(), cx);
+                        }
                         if sodam_core::quality::is_downgraded(&intent, actual_rank) {
                             let message = root.localized(
                                 "已降档：所选 {}，实际 {}",

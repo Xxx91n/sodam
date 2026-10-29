@@ -474,6 +474,28 @@ impl Language {
             "自动清理较早使用的歌曲；正在播放或下载的文件暂时保留" => "Older songs are removed automatically; files in use are kept until released",
             "清空缓存" => "Clear Cache",
             "正在清理…" => "Clearing…",
+            "批量升级缓存" => "Batch Upgrade Cache",
+            "将已有低档位缓存重新拉取为更高音质，失败不会损坏旧缓存" => {
+                "Re-fetch cached audio at a higher quality without affecting existing files on failure"
+            }
+            "所有缓存歌曲均已达到或超过该档位" => {
+                "All cached songs are already at or above this quality"
+            }
+            "{} 首歌曲可升级 · 预估流量 {} · 存储变化 {}" => {
+                "{} songs can be upgraded · Est. traffic {} · Storage change {}"
+            }
+            "正在计算升级预估…" => "Estimating upgrade…",
+            "正在升级 ({} / {})…" => "Upgrading ({} / {})…",
+            "批量升级" => "Batch Upgrade",
+            "正在升级…" => "Upgrading…",
+            "缓存升级完成：共升级 {} 首歌曲" => "Cache upgrade complete: upgraded {} songs",
+            "缓存升级完成：成功升级 {} 首，{} 首跳过或无更高档位" => {
+                "Cache upgrade complete: upgraded {} songs, {} skipped or no higher quality"
+            }
+            "无损音质需 VIP 会员权限" => "Lossless quality requires VIP membership",
+            "无损音质需 VIP 会员权限，当前账号无法升级为无损" => {
+                "Lossless quality requires VIP membership; current account cannot upgrade to lossless"
+            }
             "诊断日志" => "Diagnostic Logs",
             "默认记录在本机，用于排查播放问题；「清空缓存」不会删除它们" => {
                 "Stored on this device to help diagnose playback problems; Clear Cache never removes them"

@@ -212,6 +212,13 @@ pub struct TrackMenu {
     pub position: gpui::Point<gpui::Pixels>,
 }
 
+/// 批量升级进度（完成数与总数）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct BatchUpgradeProgress {
+    pub(crate) done: usize,
+    pub(crate) total: usize,
+}
+
 /// 根视图状态。
 pub struct Root {
     pub nav: Nav,
@@ -447,6 +454,14 @@ pub struct Root {
     pub(crate) cache_summary: (u64, usize, u64, usize),
     pub(crate) cache_maintenance_running: bool,
     pub(crate) cache_clearing: bool,
+    pub(crate) batch_upgrade_target: sodam_core::quality::QualityIntent,
+    pub(crate) batch_upgrade_estimate: Option<sodam_core::cache::UpgradeEstimate>,
+    pub(crate) batch_upgrading: bool,
+    pub(crate) batch_upgrade_progress: BatchUpgradeProgress,
+    /// 单曲后台缓存升级尝试记录（避免同一首低档曲目在切歌或重播时反复拉取升级）。
+    pub(crate) cache_upgrade_attempted: Arc<Mutex<HashSet<String>>>,
+    /// 单曲后台缓存升级当前在飞集合（限制并发，避免连续切歌时打满网络与签名服务）。
+    pub(crate) cache_upgrade_inflight: HashSet<String>,
     /// 正在删除诊断日志；只用于禁用重复点击，与缓存清理互不影响。
     pub(crate) log_clearing: bool,
     /// 下载完成后交给音频线程的装载序号；避免同一曲目重载/失败时永久 loading。
@@ -672,6 +687,12 @@ impl Root {
             cache_summary: (0, 0, 0, 0),
             cache_maintenance_running: false,
             cache_clearing: false,
+            batch_upgrade_target: sodam_core::quality::QualityIntent::Tier("lossless".into()),
+            batch_upgrade_estimate: None,
+            batch_upgrading: false,
+            batch_upgrade_progress: BatchUpgradeProgress::default(),
+            cache_upgrade_attempted: Arc::new(Mutex::new(HashSet::new())),
+            cache_upgrade_inflight: HashSet::new(),
             log_clearing: false,
             pending_engine_load: None,
             pending_track: None,

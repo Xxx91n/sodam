@@ -882,12 +882,12 @@ impl Root {
         match save_result {
             Ok(()) => {
                 // 文案要过词典：状态行现在真的会显示，英文界面不能露出中文。
-                let tone = if theme == ThemeKind::Light {
+                let label = if theme == ThemeKind::Light {
                     self.tr("浅色")
                 } else {
                     self.tr("深色")
                 };
-                let status = self.localized("主题已切换为{}", &[tone.to_string()]);
+                let status = self.localized("主题已切换为{}", &[label.to_string()]);
                 self.set_status_text(status);
             }
             Err(err) => {
@@ -1078,9 +1078,11 @@ impl Root {
             .iter()
             .map(|track| track.cover.clone())
             .collect();
-        self.set_status("已切换到{}队列", &[label.to_string()]);
         self.ensure_covers(&covers, cx);
         self.open_lyrics(cx);
+        // 确认要写在切页之后：状态行在换页时清空，写在 `open_lyrics`
+        // （内部 `set_nav(Nav::Lyrics)`）之前等于刚写上就被收走。
+        self.set_status("已切换到{}队列", &[label.to_string()]);
         if autoplay {
             self.start_track(cx);
         } else {

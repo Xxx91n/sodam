@@ -59,13 +59,20 @@ impl StatusLine {
         (!text.is_empty()).then_some(text)
     }
 
-    /// 为当前这条状态认领一次到期计时：同一条状态只认领一次，返回认领到的序号。
-    pub(crate) fn claim_timer(&mut self) -> Option<u64> {
+    /// 为当前这条状态认领一次到期计时：同一条状态只认领一次。
+    ///
+    /// 返回 `(序号, 剩余时长)`。剩余按**写入时刻**算，不按首次渲染时刻重新起算：
+    /// 窗口被遮挡后恢复时首次渲染可能已经过去几秒，不能因此让这条多留一整段。
+    pub(crate) fn claim_timer(&mut self, now: Instant) -> Option<(u64, Duration)> {
         if self.scheduled_seq == self.seq {
             return None;
         }
+        let since = self.since?;
         self.scheduled_seq = self.seq;
-        Some(self.seq)
+        Some((
+            self.seq,
+            VISIBLE_FOR.saturating_sub(now.saturating_duration_since(since)),
+        ))
     }
 
     /// 计时到期：如果到期时还是同一条状态，收走它并返回 `true`。
@@ -83,11 +90,11 @@ impl StatusLine {
 impl Root {
     /// 给当前这条状态挂到期计时器；计时器在渲染路径上按序号去重。
     pub(crate) fn schedule_status_clear(&mut self, cx: &mut Context<Self>) {
-        let Some(seq) = self.status_line.claim_timer() else {
+        let Some((seq, remaining)) = self.status_line.claim_timer(Instant::now()) else {
             return;
         };
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(VISIBLE_FOR).await;
+            cx.background_executor().timer(remaining).await;
             let _ = this.update(cx, |root, cx| {
                 if root.status_line.expire(seq) {
                     cx.notify();
@@ -170,11 +177,11 @@ mod tests {
     fn a_new_status_replaces_the_old_one_and_restarts_the_timer() {
         let mut line = StatusLine::default();
         line.set("音质已设为 无损，从下一首生效".to_string());
-        let first = line.claim_timer();
+        let first = line.claim_timer(Instant::now());
         line.set("已开启详细日志".to_string());
-        let second = line.claim_timer();
-        assert!(first.is_some() && second.is_some());
-        assert_ne!(first, second, "新状态要重新认领一次到期计时");
+        let second = line.claim_timer(Instant::now());
+        let (first, second) = (first.expect("first claims"), second.expect("second claims"));
+        assert_ne!(first.0, second.0, "新状态要重新认领一次到期计时");
         assert_eq!(line.visible(Instant::now()), Some("已开启详细日志"));
     }
 
@@ -182,11 +189,13 @@ mod tests {
     fn only_the_latest_status_timer_can_expire_it() {
         let mut line = StatusLine::default();
         line.set("第一条".to_string());
-        let first = line.claim_timer().expect("first status claims a timer");
+        let (first, _) = line
+            .claim_timer(Instant::now())
+            .expect("first claims a timer");
         line.set("第二条".to_string());
-        let second = line
-            .claim_timer()
-            .expect("second status claims its own timer");
+        let (second, _) = line
+            .claim_timer(Instant::now())
+            .expect("second claims its own timer");
         assert!(!line.expire(first), "旧计时器不该收走新文案");
         assert!(line.expire(second));
         assert_eq!(line.visible(Instant::now()), None);
@@ -196,7 +205,9 @@ mod tests {
     fn clearing_now_hides_the_status_for_good() {
         let mut line = StatusLine::default();
         line.set("正在搜索「晴天」…".to_string());
-        let seq = line.claim_timer().expect("status claims a timer");
+        let (seq, _) = line
+            .claim_timer(Instant::now())
+            .expect("status claims a timer");
         line.clear();
         assert_eq!(line.visible(Instant::now()), None);
         assert!(!line.expire(seq));
@@ -206,7 +217,29 @@ mod tests {
     fn each_status_claims_exactly_one_timer() {
         let mut line = StatusLine::default();
         line.set("正在读取歌单…".to_string());
-        assert!(line.claim_timer().is_some());
-        assert_eq!(line.claim_timer(), None, "同一条状态不该每帧再排一次");
+        assert!(line.claim_timer(Instant::now()).is_some());
+        assert!(
+            line.claim_timer(Instant::now()).is_none(),
+            "同一条状态不该每帧再排一次"
+        );
+    }
+
+    #[test]
+    fn a_late_first_render_only_gets_the_remaining_time() {
+        let mut line = StatusLine::default();
+        line.set("正在加载歌单…".to_string());
+        // 首次渲染晚了 4 秒：计时器只能排剩下的那 1 秒，不能重新排整段 5 秒。
+        let now = Instant::now() + (VISIBLE_FOR * 4 / 5);
+        let (_, remaining) = line.claim_timer(now).expect("status claims a timer");
+        assert!(
+            remaining <= VISIBLE_FOR / 5,
+            "首帧来晚了应当只排剩余时长，实得 {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn a_status_never_written_claims_no_timer() {
+        let mut line = StatusLine::default();
+        assert!(line.claim_timer(Instant::now()).is_none());
     }
 }

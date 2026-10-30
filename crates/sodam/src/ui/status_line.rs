@@ -62,7 +62,8 @@ impl StatusLine {
     /// 为当前这条状态认领一次到期计时：同一条状态只认领一次。
     ///
     /// 返回 `(序号, 剩余时长)`。剩余按**写入时刻**算，不按首次渲染时刻重新起算：
-    /// 窗口被遮挡后恢复时首次渲染可能已经过去几秒，不能因此让这条多留一整段。
+    /// 没有别的重绘时，收走这一行靠的就是这个计时器到期后的 `notify`；首帧来得越晚，
+    /// 按整段重排就会让它多挂越久。
     pub(crate) fn claim_timer(&mut self, now: Instant) -> Option<(u64, Duration)> {
         if self.scheduled_seq == self.seq {
             return None;
@@ -225,6 +226,19 @@ mod tests {
     }
 
     #[test]
+    fn an_on_time_first_render_gets_the_whole_window() {
+        let mut line = StatusLine::default();
+        line.set("正在读取歌单…".to_string());
+        let (_, remaining) = line
+            .claim_timer(Instant::now())
+            .expect("status claims a timer");
+        assert!(
+            remaining <= VISIBLE_FOR && remaining > VISIBLE_FOR - Duration::from_millis(100),
+            "首帧准时应当排满整段窗口，实得 {remaining:?}"
+        );
+    }
+
+    #[test]
     fn a_late_first_render_only_gets_the_remaining_time() {
         let mut line = StatusLine::default();
         line.set("正在加载歌单…".to_string());
@@ -232,9 +246,22 @@ mod tests {
         let now = Instant::now() + (VISIBLE_FOR * 4 / 5);
         let (_, remaining) = line.claim_timer(now).expect("status claims a timer");
         assert!(
-            remaining <= VISIBLE_FOR / 5,
+            remaining <= VISIBLE_FOR / 5
+                && remaining > VISIBLE_FOR / 5 - Duration::from_millis(100),
             "首帧来晚了应当只排剩余时长，实得 {remaining:?}"
         );
+    }
+
+    #[test]
+    fn an_already_expired_status_claims_a_zero_timer() {
+        // 渲染入口先过 `visible()`，正常路径走不到这里；真走到了就让计时器立刻到期，
+        // 而不是再排一整段。
+        let mut line = StatusLine::default();
+        line.set("正在搜索…".to_string());
+        let (_, remaining) = line
+            .claim_timer(Instant::now() + VISIBLE_FOR)
+            .expect("status claims a timer");
+        assert_eq!(remaining, Duration::ZERO);
     }
 
     #[test]

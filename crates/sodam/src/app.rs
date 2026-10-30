@@ -1363,8 +1363,18 @@ impl Root {
     /// 只写状态，不负责重绘——调用方照常 `cx.notify()`（现有写入点都在用户动作或
     /// 后台回调里，本身就会跟着重绘）。
     pub fn set_status_text(&mut self, text: impl Into<String>) {
+        self.remember_status(text);
+    }
+
+    /// 写入状态行，并把摘掉接口地址之后的文案交回去。
+    ///
+    /// 提示通道要与状态行同一句，所以两边共用这一处脱敏与写入，不各自再拼一遍。
+    fn remember_status(&mut self, text: impl Into<String>) -> String {
+        // 内部端点对普通用户既无意义又泄露拓扑；带签名 token 的查询串更早就不该出现。
+        // 给维护者看的原文留给日志（`PlaybackFailure::detail`）。
         let text = sodam_core::failure::strip_urls_for_user(&text.into());
-        self.status_line.set(text);
+        self.status_line.set(text.clone());
+        text
     }
 
     /// 技术原文的唯一去处：诊断日志（默认开，写在本机日志目录）。
@@ -1436,12 +1446,10 @@ impl Root {
         text: String,
         key: Option<&str>,
     ) -> u64 {
-        // 与普通反馈共用同一条写入路径：摘掉接口地址（内部端点对普通用户既无意义又
-        // 泄露拓扑；带签名 token 的查询串更早就不该出现），同时写状态行。
-        // 两条通道各管一件事——轻提示 3 秒就走，负责「叫住你」；状态行留到 5 秒，
+        // 与普通反馈共用同一条写入路径（脱敏 + 写状态行），两条通道拿同一句文案。
+        // 各管一件事——轻提示 3 秒就走，负责「叫住你」；状态行留到 5 秒，
         // 负责「留下来说过什么」。
-        self.set_status_text(text);
-        let message = self.status_line.text().to_string();
+        let message = self.remember_status(text);
         self.push_message_with_key(kind, message, Some(ui::message::DEFAULT_DURATION), key)
     }
 

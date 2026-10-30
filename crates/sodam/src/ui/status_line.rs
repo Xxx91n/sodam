@@ -42,16 +42,11 @@ impl StatusLine {
         self.text = text;
     }
 
-    /// 清空。切页时调用：`status` 是全局反馈，不属于某一页，
+    /// 清空。切页时调用：状态行是全局反馈，不属于某一页，
     /// 留在新页面上就成了上一页的残留文案。
     pub(crate) fn clear(&mut self) {
         self.text.clear();
         self.since = None;
-    }
-
-    /// 最近一条状态的文案（不论是否还在显示窗口内）。
-    pub(crate) fn text(&self) -> &str {
-        &self.text
     }
 
     /// 现在该显示什么：空文案、没写过、或已过显示窗口都不显示。

@@ -238,9 +238,14 @@ pub struct Root {
     pub queue_origin: QueueOrigin,
     pub playing: bool,
     pub status: String,
-    /// 全局轻提示：每次 status 更新都递增序号，并记录起始时间。
+    /// 状态行的写入序号与时间戳：每次 `status` 更新都记一次。
+    ///
+    /// 序号在渲染路径上去重（渲染每帧都跑），时间戳决定何时过期；
+    /// 显示逻辑在 `ui::status_line`。
     pub(crate) status_seq: u64,
     pub(crate) status_since: Option<std::time::Instant>,
+    /// 已经为哪个 `status_seq` 排过到期计时器，避免每帧重复起后台任务。
+    pub(crate) status_timer_seq: u64,
     /// 全局 message 队列与计时去重集合。
     pub(crate) messages: Vec<ui::message::Message>,
     pub(crate) next_message_id: u64,
@@ -585,6 +590,7 @@ impl Root {
             status,
             status_seq: 0,
             status_since: None,
+            status_timer_seq: 0,
             messages: Vec::new(),
             next_message_id: 0,
             message_timers: HashSet::new(),
@@ -1437,6 +1443,9 @@ impl Root {
     ) -> u64 {
         // 上屏前摘掉接口地址：内部端点对普通用户既无意义又泄露拓扑；带签名 token 的查询串
         // 更早就不该出现。给维护者看的原文留给日志（`PlaybackFailure::detail`）。
+        //
+        // 同时写状态行：轻提示 3 秒就走，状态行留到 5 秒，用户回头还能看到刚才发生了什么。
+        // 两条通道各管一件事——轻提示负责「叫住你」，状态行负责「留下来说过什么」。
         self.status = sodam_core::failure::strip_urls_for_user(&text);
         self.show_status();
         self.push_message_with_key(
@@ -1447,7 +1456,7 @@ impl Root {
         )
     }
 
-    /// 记录最新状态。
+    /// 记下这条状态的时间与序号：状态行据此决定「什么时候出现」与「什么时候收走」。
     pub(crate) fn show_status(&mut self) {
         self.status_seq = self.status_seq.wrapping_add(1);
         self.status_since = Some(std::time::Instant::now());
@@ -1681,6 +1690,11 @@ impl Render for Root {
                     }),
             )
             .child(ui::player_bar::render(self, cx))
+            // 普通操作反馈的固定出口：播放栏上方的一行状态。绝对定位，出现与消失
+            // 都不推挤页面；层级在弹层之下，所以菜单、遮罩、message 都压得住它。
+            .when_some(ui::status_line::render(self, cx), |this, status| {
+                this.child(status)
+            })
             // 标题栏覆盖在各面板背景之上；不再单独占一行而截断侧栏底色。
             // 放在普通内容之后、弹层之前，控制按钮可点击，弹层仍能覆盖标题栏。
             .when(own_titlebar, |this| {

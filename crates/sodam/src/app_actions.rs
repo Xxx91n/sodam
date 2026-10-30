@@ -415,10 +415,10 @@ impl Root {
         // 切档后按新意图重新预取下一首（正在播的这首不受影响）
         self.spawn_prefetch(cx);
         let label = crate::ui::player_bar::quality_label(intent.as_setting(), self.language);
-        // 走全局提示：`status` 没有渲染出口（见 #83），成功提示写进去用户看不见，
-        // 而失败路径用的是能渲染的 `notify_error_once`，会变成「成功静默、失败有声」。
+        // 普通操作反馈走状态行：确认「选了哪一档、什么时候生效」就够了，
+        // 不值得再弹一条抢注意力的全局提示（见 #83）。
         let message = self.localized("音质已设为 {}，从下一首生效", &[label]);
-        self.notify_success_once("quality-changed", message);
+        self.set_status_text(message);
         self.quality_menu = None;
     }
 
@@ -435,8 +435,8 @@ impl Root {
                 } else {
                     self.tr("已关闭详细日志：回到 INFO，环境变量仍然有效")
                 };
-                // 同上：开关就在设置页上，只有全局提示是用户看得见的反馈。
-                self.notify_success_once("detailed-logs-changed", message);
+                // 同上：开关就在设置页上，一句状态行确认即可，不弹全局提示。
+                self.set_status_text(message);
             }
             Err(err) => {
                 let message = self.failure_text("详细日志已生效，但保存失败", &err, SAVE_TEXT);
@@ -881,14 +881,13 @@ impl Root {
         theme::set_theme(theme);
         match save_result {
             Ok(()) => {
-                let status = format!(
-                    "主题已切换为{}",
-                    if theme == ThemeKind::Light {
-                        "浅色"
-                    } else {
-                        "深色"
-                    }
-                );
+                // 文案要过词典：状态行现在真的会显示，英文界面不能露出中文。
+                let tone = if theme == ThemeKind::Light {
+                    self.tr("浅色")
+                } else {
+                    self.tr("深色")
+                };
+                let status = self.localized("主题已切换为{}", &[tone.to_string()]);
                 self.set_status_text(status);
             }
             Err(err) => {
@@ -2244,6 +2243,9 @@ impl Root {
     ///
     /// 未登录时其他页面一律进不去（登录入口在设置 → 账户）。
     pub fn on_nav_changed(&mut self, cx: &mut Context<Self>) {
+        // 状态行是全局反馈，不属于某一页：切页就收走，否则「正在搜索…」会跟着
+        // 用户跑到设置页上。本页自己的加载提示在这之后写入，不受影响。
+        self.clear_status_line();
         // 离开设置页时录制态不会自己结束：卡片不在树上时收不到键，但回到设置页那一行
         // 还显示着「按下新的组合键…」，用户随手按一个键就被写进配置。
         self.shortcut_capture = None;

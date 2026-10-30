@@ -2247,7 +2247,7 @@ impl Root {
     pub fn on_nav_changed(&mut self, cx: &mut Context<Self>) {
         // 状态行是全局反馈，不属于某一页：切页就收走，否则「正在搜索…」会跟着
         // 用户跑到设置页上。本页自己的加载提示在这之后写入，不受影响。
-        self.clear_status_line();
+        self.status_line.clear();
         // 离开设置页时录制态不会自己结束：卡片不在树上时收不到键，但回到设置页那一行
         // 还显示着「按下新的组合键…」，用户随手按一个键就被写进配置。
         self.shortcut_capture = None;

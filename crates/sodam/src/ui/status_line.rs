@@ -23,6 +23,7 @@ pub const VISIBLE_FOR: Duration = Duration::from_secs(5);
 ///
 /// 四者必须一起变：单独写文案而不动序号，到期计时器就还在替旧文案计时。
 /// 收在一个类型里，写入方只调 [`StatusLine::set`]，看不到这些细节。
+#[derive(Default)]
 pub(crate) struct StatusLine {
     text: String,
     /// 每写一条状态加一；计时器拿它判断「到期时还是不是同一条」。
@@ -31,17 +32,6 @@ pub(crate) struct StatusLine {
     since: Option<Instant>,
     /// 已经为哪个 `seq` 排过计时器。渲染每帧都跑，靠它避免每帧起一个后台任务。
     scheduled_seq: u64,
-}
-
-impl Default for StatusLine {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            seq: 0,
-            since: None,
-            scheduled_seq: 0,
-        }
-    }
 }
 
 impl StatusLine {
@@ -96,11 +86,6 @@ impl StatusLine {
 }
 
 impl Root {
-    /// 清空状态行。
-    pub(crate) fn clear_status_line(&mut self) {
-        self.status_line.clear();
-    }
-
     /// 给当前这条状态挂到期计时器；计时器在渲染路径上按序号去重。
     pub(crate) fn schedule_status_clear(&mut self, cx: &mut Context<Self>) {
         let Some(seq) = self.status_line.claim_timer() else {
@@ -121,8 +106,10 @@ impl Root {
 /// 渲染状态行；没有可显示的内容时返回 `None`。
 ///
 /// 位置固定在播放栏上方、内容区左侧：与播放栏同一个视觉底部，又不挤占播放栏
-/// 自己的三栏布局。用绝对定位，出现与消失都不推挤页面。它不挂任何交互处理器，
-/// 所以在 gpui 里不产生命中框，压在页面上的几秒不会挡住下面列表的点击。
+/// 自己的三栏布局。用绝对定位，出现与消失都不推挤页面。
+///
+/// 它不挂任何交互处理器（与 `ui::message` 的浮层同型），预期不会产生命中框，
+/// 压在页面上的这几秒不该挡住下面列表的点击——这一点要在真机验收时确认。
 pub(crate) fn render(root: &mut Root, cx: &mut Context<Root>) -> Option<AnyElement> {
     let text = root.status_line.visible(Instant::now())?.to_string();
     root.schedule_status_clear(cx);
@@ -132,7 +119,7 @@ pub(crate) fn render(root: &mut Root, cx: &mut Context<Root>) -> Option<AnyEleme
             .absolute()
             .bottom(px(theme::PLAYER_H + theme::space::SM))
             .left(px(theme::SIDEBAR_W + theme::space::LG))
-            .max_w(px(520.0))
+            .max_w(px(theme::STATUS_LINE_MAX_W))
             .truncate()
             .px(px(theme::space::MD))
             .py(px(theme::space::SM))

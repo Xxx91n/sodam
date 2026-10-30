@@ -420,8 +420,7 @@ impl Root {
         let message = self.localized("音质已设为 {}，从下一首生效", &[label]);
         self.set_status_text(message);
         self.quality_menu = None;
-        // 入口（播放栏菜单 / 设置页）本来也会重绘，但这一处自己也发一次：
-        // 状态行只写不画（见 `set_status_text` 的约定），别把可见性押给调用方。
+        // 与 `set_detailed_logs` 一致：动作自己发一次重绘，不靠入口顺手带。
         cx.notify();
     }
 

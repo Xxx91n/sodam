@@ -405,8 +405,9 @@ impl Root {
     pub fn set_quality(&mut self, quality: &str, cx: &mut Context<Self>) {
         let intent = sodam_core::quality::QualityIntent::parse(quality);
         self.settings.set_quality_intent_by_user(&intent);
-        if let Err(err) = self.settings.save() {
-            let message = self.failure_text("保存音质设置失败", &err, SAVE_TEXT);
+        let save_result = self.settings.save();
+        if let Err(err) = &save_result {
+            let message = self.failure_text("保存音质设置失败", err, SAVE_TEXT);
             self.notify_error_once("quality-save-failed", message);
         }
         if let Some(session) = self.session.as_mut() {
@@ -414,11 +415,16 @@ impl Root {
         }
         // 切档后按新意图重新预取下一首（正在播的这首不受影响）
         self.spawn_prefetch(cx);
-        let label = crate::ui::player_bar::quality_label(intent.as_setting(), self.language);
-        // 普通操作反馈走状态行：确认「选了哪一档、什么时候生效」就够了，
-        // 不值得再弹一条抢注意力的全局提示（见 #83）。
-        let message = self.localized("音质已设为 {}，从下一首生效", &[label]);
-        self.set_status_text(message);
+        // 只有真的落盘了才报「已设为」：保存失败时上面已经给过错误提示，
+        // 再写一句成功会在同屏互相矛盾，toast 消失后还只剩那句假的成功。
+        // 内存里的意图照样生效（`session.apply` 已带过去），切档本就从下一首生效。
+        if save_result.is_ok() {
+            let label = crate::ui::player_bar::quality_label(intent.as_setting(), self.language);
+            // 普通操作反馈走状态行：确认「选了哪一档、什么时候生效」就够了，
+            // 不值得再弹一条抢注意力的全局提示（见 #83）。
+            let message = self.localized("音质已设为 {}，从下一首生效", &[label]);
+            self.set_status_text(message);
+        }
         self.quality_menu = None;
         // 与 `set_detailed_logs` 一致：动作自己发一次重绘，不靠入口顺手带。
         cx.notify();

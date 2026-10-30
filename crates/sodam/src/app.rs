@@ -537,6 +537,8 @@ impl Root {
                 "Not ready: set Cookie and signer URL in Settings (or use SODA_COOKIE / QISHUI_SIGNER_URL)".to_string()
             }
         };
+        // 启动文案是写死的常量，不经过 `remember_status`（那里要 `&mut self` 之外
+        // 还负责脱敏；构造期还没拿到 `Root`），也不需要脱敏。
         let mut status_line = ui::status_line::StatusLine::default();
         status_line.set(status);
         let mut queue = Queue::new(Vec::<TrackItem>::new());
@@ -1446,9 +1448,8 @@ impl Root {
         text: String,
         key: Option<&str>,
     ) -> u64 {
-        // 与普通反馈共用同一条写入路径（脱敏 + 写状态行），两条通道拿同一句文案。
-        // 各管一件事——轻提示 3 秒就走，负责「叫住你」；状态行留到 5 秒，
-        // 负责「留下来说过什么」。
+        // 两条通道拿同一句文案（脱敏 + 写状态行只在 `remember_status` 一处），
+        // 轻提示 3 秒就走，状态行留到 5 秒。
         let message = self.remember_status(text);
         self.push_message_with_key(kind, message, Some(ui::message::DEFAULT_DURATION), key)
     }

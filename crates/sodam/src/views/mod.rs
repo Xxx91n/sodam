@@ -9,6 +9,7 @@ use gpui::{
 use crate::app::{LoginState, Nav, Root};
 use crate::ui::artwork::{cover, scene_image};
 use crate::ui::icons;
+use crate::ui::middle_drag::{MiddleDragList, MiddleDragTarget};
 use crate::ui::spinner::loading_state;
 use crate::ui::theme;
 use crate::ui::theme::ThemeKind;
@@ -486,6 +487,7 @@ pub(crate) fn scrolling_detail_page(
     show_load_more: bool,
     on_load_more: Option<gpui::Entity<Root>>,
     list_state: &gpui::ListState,
+    middle_drag_target: MiddleDragList,
     cx: &mut Context<Root>,
 ) -> AnyElement {
     let language = root.language;
@@ -750,6 +752,16 @@ pub(crate) fn scrolling_detail_page(
         .flex_1()
         .min_h(px(0.0))
         .w_full()
+        // 按下时上报自己是这次拖动的目标；移动、松开由根元素统一收。
+        .on_mouse_down(
+            MouseButton::Middle,
+            cx.listener(move |root, event: &MouseDownEvent, _window, _cx| {
+                root.begin_middle_drag(
+                    f32::from(event.position.y),
+                    MiddleDragTarget::List(middle_drag_target),
+                );
+            }),
+        )
         .child(
             canvas(
                 move |bounds: gpui::Bounds<gpui::Pixels>, _window, _cx| {
@@ -1139,6 +1151,7 @@ pub fn render(root: &mut Root, window: &Window, cx: &mut Context<Root>) -> impl 
                         false,
                         None,
                         &root.liked_detail_list,
+                        MiddleDragList::LikedDetail,
                         cx,
                     ))
                     .into_any_element()
@@ -1178,6 +1191,7 @@ pub fn render(root: &mut Root, window: &Window, cx: &mut Context<Root>) -> impl 
                         false,
                         None,
                         &root.library_detail_list,
+                        MiddleDragList::LibraryDetail,
                         cx,
                     ))
                     .into_any_element()

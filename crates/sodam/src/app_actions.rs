@@ -3,6 +3,7 @@
 //! [`Root`] 的字段定义在 [`super`]，这里按领域拆分实现，避免单文件继续膨胀。
 
 use crate::ui::i18n::Language;
+use crate::ui::middle_drag::{MiddleDragList, MiddleDragTarget};
 use crate::ui::theme::{self, ThemeKind};
 use gpui::prelude::*;
 use gpui::{Context, Window};
@@ -2152,24 +2153,77 @@ impl Root {
         }
     }
 
-    /// 设置页上报「中键按下」：记下起点和当时的滚动位置。
-    pub(crate) fn begin_middle_drag(&mut self, y: f32) {
-        // GPUI 的偏移是负的：0 在最顶上，越往下滚越负。
-        let top = -f32::from(self.settings_scroll.offset().y);
-        let nav = self.nav;
-        self.middle_drag.begin(y, top, nav);
+    /// 按下中键时选定这次要滚的区域，记下起点和当时的滚动位置。
+    pub(crate) fn begin_middle_drag(&mut self, y: f32, target: MiddleDragTarget) {
+        let top = self.middle_drag_top(target);
+        self.middle_drag.begin(y, top, self.nav, target);
     }
 
-    /// 中键按着移动时推进一次：算出新偏移，写回设置页的滚动句柄。
+    /// 目标区域眼下离顶部多远。句柄给的偏移是负的，取相反数。
+    fn middle_drag_top(&self, target: MiddleDragTarget) -> f32 {
+        match target {
+            MiddleDragTarget::Settings => -f32::from(self.settings_scroll.offset().y),
+            MiddleDragTarget::List(list) => -f32::from(
+                self.middle_drag_list(list)
+                    .scroll_px_offset_for_scrollbar()
+                    .y,
+            ),
+        }
+    }
+
+    /// 目标区域最多能滚多远。
+    fn middle_drag_max_top(&self, target: MiddleDragTarget) -> f32 {
+        match target {
+            MiddleDragTarget::Settings => f32::from(self.settings_scroll.max_offset().y),
+            MiddleDragTarget::List(list) => {
+                f32::from(self.middle_drag_list(list).max_offset_for_scrollbar().y)
+            }
+        }
+    }
+
+    /// 六个长列表各自的滚动状态。
+    fn middle_drag_list(&self, target: MiddleDragList) -> &gpui::ListState {
+        match target {
+            MiddleDragList::Scenes => &self.scenes_list,
+            MiddleDragList::LikedDetail => &self.liked_detail_list,
+            MiddleDragList::LibraryDetail => &self.library_detail_list,
+            MiddleDragList::SearchPlaylistDetail => &self.search_playlist_detail_list,
+            MiddleDragList::ArtistDetail => &self.artist_detail_list,
+            MiddleDragList::AlbumDetail => &self.album_detail_list,
+        }
+    }
+
+    /// 中键按着移动时推进一次：算出新位置，写回按下时锁定的那个区域。
     pub(crate) fn middle_drag_move(&mut self, y: f32, window_active: bool, cx: &mut Context<Self>) {
         let nav = self.nav;
-        let max_top = f32::from(self.settings_scroll.max_offset().y);
-        let Some(top) = self.middle_drag.move_to(y, max_top, nav, window_active) else {
+        let Some(target) = self.middle_drag.target() else {
             return;
         };
-        let mut offset = self.settings_scroll.offset();
-        offset.y = gpui::px(-top);
-        self.settings_scroll.set_offset(offset);
+        match target {
+            // 普通滚动句柄吃绝对偏移，直接写回去。
+            MiddleDragTarget::Settings => {
+                let max_top = self.middle_drag_max_top(target);
+                let Some(top) = self.middle_drag.move_to(y, max_top, nav, window_active) else {
+                    return;
+                };
+                let mut offset = self.settings_scroll.offset();
+                offset.y = gpui::px(-top);
+                self.settings_scroll.set_offset(offset);
+            }
+            // 变高虚拟列表只吃增量。算出的目标已经夹在 0 到最大偏移之间，
+            // 所以到边时增量为 0，不会带着外层一起滚。
+            MiddleDragTarget::List(list) => {
+                let current_top = self.middle_drag_top(target);
+                let max_top = self.middle_drag_max_top(target);
+                let Some(delta) =
+                    self.middle_drag
+                        .move_by(y, current_top, max_top, nav, window_active)
+                else {
+                    return;
+                };
+                self.middle_drag_list(list).scroll_by(gpui::px(delta));
+            }
+        }
         cx.notify();
     }
 

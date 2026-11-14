@@ -820,6 +820,7 @@ fn search_playlist_detail(root: &Root, cx: &mut Context<Root>) -> AnyElement {
             false,
             None,
             &root.search_playlist_detail_list,
+            MiddleDragList::SearchPlaylistDetail,
             cx,
         ))
         .into_any_element()
@@ -920,6 +921,7 @@ pub(crate) fn artist_page(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                 detail.tracks_has_more,
                 Some(cx.entity()),
                 &root.artist_detail_list,
+                MiddleDragList::ArtistDetail,
                 cx,
             )
         })
@@ -977,6 +979,7 @@ pub(crate) fn album_page(root: &Root, cx: &mut Context<Root>) -> AnyElement {
                 false,
                 None,
                 &root.album_detail_list,
+                MiddleDragList::AlbumDetail,
                 cx,
             )
         })

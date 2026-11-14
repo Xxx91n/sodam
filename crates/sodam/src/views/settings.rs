@@ -777,7 +777,10 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
         .on_mouse_down(
             MouseButton::Middle,
             cx.listener(|root, event: &MouseDownEvent, _window, _cx| {
-                root.begin_middle_drag(f32::from(event.position.y));
+                root.begin_middle_drag(
+                    f32::from(event.position.y),
+                    MiddleDragTarget::Settings,
+                );
             }),
         )
         .child(account_card)

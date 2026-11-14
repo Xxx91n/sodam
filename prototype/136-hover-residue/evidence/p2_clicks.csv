@@ -1,0 +1,11 @@
+﻿case,button,clickX,clickY,hitTestBefore,wfTarget,stateBefore,stateAfter,outcome
+ctrl_close_right5,close,1433,205,1(HTCLIENT),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+ctrl_min_right5,min,1345,205,1(HTCLIENT),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_close_right5,close,1433,205,1(HTCLIENT),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_close_right15,close,1443,205,1(HTCLIENT),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_max_right5,max,1389,205,1(HTCLIENT),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_min_right5,min,1345,205,1(HTCLIENT),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_close_up3,close,1428,202,1(HTCLIENT),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_close_up12,close,1428,193,12(HTTOP),WorkBuddy,alive iconic=False zoomed=False rect=462,189,1458,837,alive iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_close_below15,close,1428,852,-,WorkBuddy,-,-,skipped: target not desktop
+stale_close_below80,close,1428,917,-,WorkBuddy,-,-,skipped: target not desktop

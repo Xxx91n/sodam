@@ -1,0 +1,7 @@
+﻿case,clickX,clickY,hitBefore,stateBefore,stateAfter,outcome
+ctrl_below_button,1428,230,HTCLIENT,iconic=False zoomed=False rect=462,189,1458,837,iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_close_right5,1433,205,HTCLOSE,iconic=False zoomed=False rect=462,189,1458,837,DEAD,WINDOW HIDDEN/CLOSED
+stale_min_right5,1345,205,HTMINBUTTON,iconic=False zoomed=False rect=462,189,1458,837,iconic=True zoomed=False rect=-32000,-32000,-31840,-31972,MINIMIZED
+stale_max_right5,1389,205,HTMAXBUTTON,iconic=False zoomed=False rect=462,189,1458,837,iconic=False zoomed=True rect=-8,-8,1928,994,MAXIMIZED
+stale_close_below25,1428,230,HTCLIENT,iconic=False zoomed=False rect=462,189,1458,837,iconic=False zoomed=False rect=462,189,1458,837,no-change
+stale_close_up12_topborder,1428,193,HTTOP,iconic=False zoomed=False rect=462,189,1458,837,iconic=False zoomed=False rect=462,189,1458,837,no-change

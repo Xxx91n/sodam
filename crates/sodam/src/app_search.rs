@@ -162,6 +162,8 @@ impl Root {
     /// 搜索结果里的音乐人入口。
     pub fn open_artist_page(&mut self, artist: ArtistItem, cx: &mut Context<Self>) {
         self.open_album = None;
+        // 重试时 set_nav 可能短路（页签没变），列表又会 reset，旧拖动起点不能留。
+        self.middle_drag.finish();
         self.open_artist = Some(ArtistDetail {
             artist,
             ..Default::default()

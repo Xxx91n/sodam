@@ -2124,6 +2124,8 @@ impl Root {
         self.liked_ids_failed = false;
         self.liked_loaded = false;
         self.open_playlist = None;
+        // 退登录时 set_nav 可能因已在设置页而短路，页签没变，拖动状态自己清。
+        self.middle_drag.finish();
         self.track_menu = None;
         self.queue_menu = None;
         self.set_nav(Nav::Settings, cx);

@@ -2182,8 +2182,8 @@ impl Root {
     }
 
     /// 六个长列表各自的滚动状态。
-    fn middle_drag_list(&self, target: MiddleDragList) -> &gpui::ListState {
-        match target {
+    fn middle_drag_list(&self, list: MiddleDragList) -> &gpui::ListState {
+        match list {
             MiddleDragList::Scenes => &self.scenes_list,
             MiddleDragList::LikedDetail => &self.liked_detail_list,
             MiddleDragList::LibraryDetail => &self.library_detail_list,

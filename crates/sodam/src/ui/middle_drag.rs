@@ -103,8 +103,8 @@ impl MiddleDrag {
     }
 
     /// 给只吃增量的列表用：算出这一帧该滚多少像素。
-    /// `current_top` 是列表眼下的真实位置。上界由上面 `move_to` 的 clamp 管着，
-    /// 不靠 `scroll_by` 自己夹，所以到边时增量自然收成 0，不会漏给外层。
+    /// `current_top` 是列表眼下的真实位置。新位置由上面 `move_to` 的 clamp
+    /// 夹在 0 到最大偏移之间，所以到边时增量自然收成 0，不会漏给外层。
     pub fn move_by(
         &mut self,
         y: f32,

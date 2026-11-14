@@ -2988,6 +2988,8 @@ impl Root {
                     }
                     Err(err) => {
                         root.search_playlist = None;
+                        // 详情没读出来就消失了，页签却没变，中键还按着就停手。
+                        root.middle_drag.finish();
                         let message = root.failure_text("读取搜索歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("search-playlist-load-failed", message);
                     }
@@ -3084,6 +3086,7 @@ impl Root {
                         let message = root.failure_text("读取歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("playlist-detail-load-failed", message);
                         root.open_playlist = None;
+                        root.middle_drag.finish();
                     }
                 }
                 cx.notify();

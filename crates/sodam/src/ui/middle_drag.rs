@@ -74,6 +74,14 @@ impl MiddleDrag {
         self.0 = None;
     }
 
+    /// 只结束目标是这个列表的拖动。
+    /// 异步回调可能来得很晚，那时用户早就切到别的列表在拖了，不能顺手掐断。
+    pub fn finish_list(&mut self, list: MiddleDragList) {
+        if self.target() == Some(MiddleDragTarget::List(list)) {
+            self.0 = None;
+        }
+    }
+
     /// 页面换了或窗口失焦，当场结束；之后鼠标再动也不滚。
     pub fn sync_context(&mut self, page: Nav, window_active: bool) {
         if self
@@ -257,6 +265,29 @@ mod tests {
         drag.begin(100.0, 50.0, SETTINGS, TARGET);
         drag.sync_context(SETTINGS, false);
         assert_eq!(drag.target(), None);
+    }
+
+    /// 只结束目标是这个列表的拖动，别的列表上正在拖的不受影响。
+    #[test]
+    fn finish_list_only_stops_its_own_target() {
+        let mut drag = MiddleDrag::default();
+        drag.begin(100.0, 50.0, SETTINGS, SCENES);
+
+        drag.finish_list(MiddleDragList::AlbumDetail);
+        assert_eq!(drag.target(), Some(SCENES));
+        assert_eq!(drag.move_to(130.0, 500.0, SETTINGS, true), Some(20.0));
+
+        drag.finish_list(MiddleDragList::Scenes);
+        assert_eq!(drag.target(), None);
+        assert_eq!(drag.move_to(160.0, 500.0, SETTINGS, true), None);
+    }
+
+    /// 只结束设置页的拖动时，列表上的拖动要留着。
+    #[test]
+    fn finish_list_leaves_the_settings_target_alone() {
+        let mut drag = dragging(100.0, 50.0);
+        drag.finish_list(MiddleDragList::LikedDetail);
+        assert_eq!(drag.target(), Some(TARGET));
     }
 
     /// 列表吃增量：算出的目标和当前位置之差就是这一帧该滚的距离。

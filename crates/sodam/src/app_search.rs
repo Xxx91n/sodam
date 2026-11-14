@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::{Nav, Root};
+use crate::ui::middle_drag::MiddleDragList;
 
 impl Root {
     pub fn run_history_search(&mut self, query: String, cx: &mut Context<Self>) {
@@ -187,8 +188,8 @@ impl Root {
                 root.loading_artist = false;
                 match result {
                     Ok(detail) => {
-                        // 列表重建了，旧拖动起点作废。
-                        root.middle_drag.finish();
+                        // 异步回调可能来得很晚，只停掉以艺人列表为目标的拖动。
+                        root.middle_drag.finish_list(MiddleDragList::ArtistDetail);
                         root.artist_detail_list.reset(
                             detail.tracks.len()
                                 + 1
@@ -276,8 +277,8 @@ impl Root {
                                     }
                             })
                             .unwrap_or(1);
-                        // 「加载更多」重建了列表，旧拖动起点作废。
-                        root.middle_drag.finish();
+                        // 「加载更多」重建了列表，只停掉以艺人列表为目标的拖动。
+                        root.middle_drag.finish_list(MiddleDragList::ArtistDetail);
                         root.artist_detail_list.reset(count);
                         let covers: Vec<String> = root
                             .open_artist
@@ -380,8 +381,8 @@ impl Root {
                             .collect();
                         root.ensure_covers(&covers, cx);
                         root.open_album = Some(detail);
-                        // 列表重建了，旧拖动起点作废。
-                        root.middle_drag.finish();
+                        // 列表重建了，只停掉以专辑列表为目标的拖动。
+                        root.middle_drag.finish_list(MiddleDragList::AlbumDetail);
                         root.album_detail_list.reset(track_count + 1);
                         let message = root.localized("专辑共 {} 首", &[track_count.to_string()]);
                         root.set_status_text(message);

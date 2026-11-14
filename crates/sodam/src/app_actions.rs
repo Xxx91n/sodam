@@ -1230,6 +1230,10 @@ impl Root {
         let card_rows = self.scene_cards.len().div_ceil(columns).max(1);
         let count = common_rows + card_rows + 3;
         let columns_changed = old_columns != (columns, columns);
+        // 列数或行数一变就要重建列表，只停掉以场景列表为目标的拖动。
+        if columns_changed || count != self.scenes_list_items {
+            self.middle_drag.finish_list(MiddleDragList::Scenes);
+        }
         if columns_changed {
             self.scenes_list.reset(count);
         } else if count > self.scenes_list_items {
@@ -2549,8 +2553,8 @@ impl Root {
                 Nav::Library => self.load_playlists(cx),
                 Nav::Liked => {
                     // 收藏页使用独立列表状态；已加载数据也要重建到页首。
-                    // 列表重建了，旧拖动起点作废。
-                    self.middle_drag.finish();
+                    // 只停掉目标是收藏列表的拖动，别误伤别的列表。
+                    self.middle_drag.finish_list(MiddleDragList::LikedDetail);
                     self.liked_detail_list.reset(self.liked.len() + 1);
                     self.load_liked(cx);
                 }
@@ -2804,8 +2808,8 @@ impl Root {
 
     /// 拉「我喜欢的音乐」。
     pub fn load_liked(&mut self, cx: &mut Context<Self>) {
-        // 列表重建了，旧拖动起点作废。
-        self.middle_drag.finish();
+        // 列表重建了，只停掉目标是收藏列表的拖动。
+        self.middle_drag.finish_list(MiddleDragList::LikedDetail);
         self.liked_detail_list.reset(self.liked.len() + 1);
         // `liked` 可能被点爱心提前预填；是否完整加载必须单独标记。
         if self.loading_liked || self.liked_loaded {
@@ -2836,8 +2840,8 @@ impl Root {
                         root.liked_ids =
                             Arc::new(tracks.iter().map(|track| track.id.clone()).collect());
                         root.liked_ids_failed = false;
-                        // 列表重建了，旧拖动起点作废。
-                        root.middle_drag.finish();
+                        // 异步回调可能来得很晚，只停掉目标是收藏列表的拖动。
+                        root.middle_drag.finish_list(MiddleDragList::LikedDetail);
                         root.liked_detail_list.reset(tracks.len() + 1);
                         root.set_status("我喜欢的音乐：{} 首", &[tracks.len().to_string()]);
                         // 只取头部封面（列表封面由「可见行」按需排队）
@@ -2986,8 +2990,9 @@ impl Root {
                 match result {
                     Ok(tracks) => {
                         let count = tracks.len();
-                        // 列表重建了，跟着旧列表记的拖动起点不能再留。
-                        root.middle_drag.finish();
+                        // 列表重建了，只停掉以它为目标的拖动，别误伤别的列表。
+                        root.middle_drag
+                            .finish_list(MiddleDragList::SearchPlaylistDetail);
                         root.search_playlist_detail_list.reset(count + 1);
                         let head: Vec<String> = tracks
                             .first()
@@ -3000,8 +3005,9 @@ impl Root {
                     }
                     Err(err) => {
                         root.search_playlist = None;
-                        // 详情没读出来就消失了，页签却没变，中键还按着就停手。
-                        root.middle_drag.finish();
+                        // 详情没读出来就消失了，只停掉以它为目标的拖动。
+                        root.middle_drag
+                            .finish_list(MiddleDragList::SearchPlaylistDetail);
                         let message = root.failure_text("读取搜索歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("search-playlist-load-failed", message);
                     }
@@ -3094,15 +3100,15 @@ impl Root {
                         }
                         let final_count = tracks.len();
                         root.open_playlist = Some((playlist_id, playlist_title, Arc::new(tracks)));
-                        // 列表重建了，跟着旧列表记的拖动起点不能再留。
-                        root.middle_drag.finish();
+                        // 列表重建了，只停掉以它为目标的拖动。
+                        root.middle_drag.finish_list(MiddleDragList::LibraryDetail);
                         root.library_detail_list.reset(final_count + 1);
                     }
                     Err(err) => {
                         let message = root.failure_text("读取歌单失败", &err, REMOTE_TEXT);
                         root.notify_error_once("playlist-detail-load-failed", message);
                         root.open_playlist = None;
-                        root.middle_drag.finish();
+                        root.middle_drag.finish_list(MiddleDragList::LibraryDetail);
                     }
                 }
                 cx.notify();

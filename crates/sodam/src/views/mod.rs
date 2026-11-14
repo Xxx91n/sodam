@@ -487,7 +487,7 @@ pub(crate) fn scrolling_detail_page(
     show_load_more: bool,
     on_load_more: Option<gpui::Entity<Root>>,
     list_state: &gpui::ListState,
-    middle_drag_target: MiddleDragList,
+    drag_list: MiddleDragList,
     cx: &mut Context<Root>,
 ) -> AnyElement {
     let language = root.language;
@@ -758,7 +758,7 @@ pub(crate) fn scrolling_detail_page(
             cx.listener(move |root, event: &MouseDownEvent, _window, _cx| {
                 root.begin_middle_drag(
                     f32::from(event.position.y),
-                    MiddleDragTarget::List(middle_drag_target),
+                    MiddleDragTarget::List(drag_list),
                 );
             }),
         )

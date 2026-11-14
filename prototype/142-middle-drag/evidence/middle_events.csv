@@ -1,0 +1,27 @@
+time,step,cursorX,cursorY,capture_is_sodam,captureHwnd,middleHeld,foregroundHwnd,windowAtPoint,classAtPoint,titleAtPoint,note
+20:11:34.567,00_初始,1162,619,0,0x0,0,0xf0394,0xf0394,Zed::Window,SodaM,前台是 SodaM，光标在设置页内容区
+20:11:35.780,01_滚轮之后,1162,619,0,0x0,0,0xf0394,0xf0394,Zed::Window,SodaM,滚轮对照
+20:11:37.095,02_中键按下,1162,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,窗口内按下
+20:11:37.226,03_拖动_3,1162,649,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,往下拖 30px，仍在窗口内
+20:11:37.359,03_拖动_6,1162,679,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,往下拖 60px，仍在窗口内
+20:11:37.468,03_拖动_9,1162,709,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,往下拖 90px，仍在窗口内
+20:11:37.590,03_拖动_12,1162,739,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,往下拖 120px，仍在窗口内
+20:11:38.418,04_中键松开_窗口内,1162,739,0,0x0,0,0xf0394,0xf0394,Zed::Window,SodaM,窗口内松开
+20:11:38.773,10_中键按下_准备拖出,1162,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,在内容区按下
+20:11:38.865,11_拖出_1,1223,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,光标还在窗口内
+20:11:38.959,11_拖出_2,1284,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,光标还在窗口内
+20:11:39.053,11_拖出_3,1345,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,光标还在窗口内
+20:11:39.145,11_拖出_4,1406,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,光标还在窗口内
+20:11:39.238,11_拖出_5,1467,619,1,0xf0394,1,0xf0394,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,光标在窗口外
+20:11:39.329,11_拖出_6,1528,619,1,0xf0394,1,0xf0394,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,光标在窗口外
+20:11:39.793,12_窗口外松开,1528,619,0,0x0,0,0xf0394,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,在窗口外松开中键
+20:11:39.917,13_松开后继续移动_1,1528,639,0,0x0,0,0xf0394,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,不按键，只是移动鼠标
+20:11:40.039,13_松开后继续移动_2,1528,679,0,0x0,0,0xf0394,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,不按键，只是移动鼠标
+20:11:40.162,13_松开后继续移动_3,1528,739,0,0x0,0,0xf0394,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,不按键，只是移动鼠标
+20:11:40.814,20_按下后失焦前,1162,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,准备切走
+20:11:41.417,21_切到别的窗口,1162,619,0,0x0,1,0x20029c,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,目标=0x20029c ZCode SetForegroundWindow=1
+20:11:41.671,22_失焦后松开,1162,619,0,0x0,0,0x20029c,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,清理
+20:11:42.445,30_按下后最小化前,1162,619,1,0xf0394,1,0xf0394,0xf0394,Zed::Window,SodaM,准备最小化
+20:11:43.151,31_已最小化,1162,619,0,0x0,1,0x20029c,0x202b4,Chrome_RenderWidgetHostHWND,Chrome Legacy Window,窗口最小化，中键还按着
+20:11:44.158,32_恢复后,1162,619,0,0x0,0,0xf0394,0xf0394,Zed::Window,SodaM,窗口恢复
+20:11:45.600,40_中键单击登录按钮,1037,341,0,0x0,0,0xf0394,0xf0394,Zed::Window,SodaM,点了「去登录」一下，画面变化=0.0000

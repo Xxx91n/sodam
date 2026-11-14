@@ -1,0 +1,7 @@
+﻿=== 2026-11-14T20:03:10.6615252+08:00 ===
+cmd: C:\sodam\prototype\142-middle-drag\evidence\sodam-0.3.9-windows-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CLOSEAPPLICATIONS /FORCECLOSEAPPLICATIONS
+sha256: f544a83ad015b1838c8729cd2ffed84be355151620e172ccbc8b31e21b2ab65f
+version before: 0.3.8
+exitcode: 0
+version after: 0.3.9
+install dir: C:\Users\Administrator\AppData\Local\Programs\SodaM

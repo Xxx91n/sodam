@@ -2495,6 +2495,10 @@ impl Root {
 
     /// 通用返回：同页详情优先关闭，再按真实访问历史回退。
     pub fn go_back(&mut self, cx: &mut Context<Self>) {
+        // 关掉同页详情时页签没变，sync_context 认不出来；中键还按着就会继续去滚
+        // 已经不显示的列表，再打开详情还会沿用旧起点。这里先手动停手，
+        // 真正切页时这一句是幂等的，跟渲染里的 sync_context 不冲突。
+        self.middle_drag.finish();
         if self.nav == Nav::Search && self.search_playlist.is_some() {
             self.search_playlist = None;
             self.loading_search_playlist = false;

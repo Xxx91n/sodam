@@ -187,6 +187,8 @@ impl Root {
                 root.loading_artist = false;
                 match result {
                     Ok(detail) => {
+                        // 列表重建了，旧拖动起点作废。
+                        root.middle_drag.finish();
                         root.artist_detail_list.reset(
                             detail.tracks.len()
                                 + 1
@@ -274,6 +276,8 @@ impl Root {
                                     }
                             })
                             .unwrap_or(1);
+                        // 「加载更多」重建了列表，旧拖动起点作废。
+                        root.middle_drag.finish();
                         root.artist_detail_list.reset(count);
                         let covers: Vec<String> = root
                             .open_artist
@@ -376,6 +380,8 @@ impl Root {
                             .collect();
                         root.ensure_covers(&covers, cx);
                         root.open_album = Some(detail);
+                        // 列表重建了，旧拖动起点作废。
+                        root.middle_drag.finish();
                         root.album_detail_list.reset(track_count + 1);
                         let message = root.localized("专辑共 {} 首", &[track_count.to_string()]);
                         root.set_status_text(message);

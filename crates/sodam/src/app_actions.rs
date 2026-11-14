@@ -2549,6 +2549,8 @@ impl Root {
                 Nav::Library => self.load_playlists(cx),
                 Nav::Liked => {
                     // 收藏页使用独立列表状态；已加载数据也要重建到页首。
+                    // 列表重建了，旧拖动起点作废。
+                    self.middle_drag.finish();
                     self.liked_detail_list.reset(self.liked.len() + 1);
                     self.load_liked(cx);
                 }
@@ -2802,6 +2804,8 @@ impl Root {
 
     /// 拉「我喜欢的音乐」。
     pub fn load_liked(&mut self, cx: &mut Context<Self>) {
+        // 列表重建了，旧拖动起点作废。
+        self.middle_drag.finish();
         self.liked_detail_list.reset(self.liked.len() + 1);
         // `liked` 可能被点爱心提前预填；是否完整加载必须单独标记。
         if self.loading_liked || self.liked_loaded {
@@ -2832,6 +2836,8 @@ impl Root {
                         root.liked_ids =
                             Arc::new(tracks.iter().map(|track| track.id.clone()).collect());
                         root.liked_ids_failed = false;
+                        // 列表重建了，旧拖动起点作废。
+                        root.middle_drag.finish();
                         root.liked_detail_list.reset(tracks.len() + 1);
                         root.set_status("我喜欢的音乐：{} 首", &[tracks.len().to_string()]);
                         // 只取头部封面（列表封面由「可见行」按需排队）
@@ -2957,6 +2963,8 @@ impl Root {
             return;
         }
         let playlist_id = playlist.id.clone();
+        // 从搜索结果点进歌单详情，可拖的列表换了，旧起点作废。
+        self.middle_drag.finish();
         self.search_playlist = Some((
             playlist_id.clone(),
             playlist.title.clone(),
@@ -2978,6 +2986,8 @@ impl Root {
                 match result {
                     Ok(tracks) => {
                         let count = tracks.len();
+                        // 列表重建了，跟着旧列表记的拖动起点不能再留。
+                        root.middle_drag.finish();
                         root.search_playlist_detail_list.reset(count + 1);
                         let head: Vec<String> = tracks
                             .first()
@@ -3044,6 +3054,8 @@ impl Root {
             playlist_title.clone(),
             Arc::new(Vec::new()),
         ));
+        // 立刻切到详情页（曲目先空着）；列表重建了，旧拖动起点作废。
+        self.middle_drag.finish();
         self.library_detail_list.reset(1);
         self.loading_playlist = true;
         self.set_status_text(self.tr("正在读取歌单曲目…"));
@@ -3082,6 +3094,8 @@ impl Root {
                         }
                         let final_count = tracks.len();
                         root.open_playlist = Some((playlist_id, playlist_title, Arc::new(tracks)));
+                        // 列表重建了，跟着旧列表记的拖动起点不能再留。
+                        root.middle_drag.finish();
                         root.library_detail_list.reset(final_count + 1);
                     }
                     Err(err) => {

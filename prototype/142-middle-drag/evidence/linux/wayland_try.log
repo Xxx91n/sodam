@@ -1,0 +1,35 @@
+=== runtime dir / socket ===
+srwxrwxrwx 1 1000 1000 0 Nov 14 21:15 /mnt/wslg/runtime-dir/wayland-0
+=== start: DISPLAY unset, WAYLAND_DISPLAY kept, WAYLAND_DEBUG=1 ===
+new_pid=4566
+alive_after_7s=no
+=== sodam processes now ===
+1 /init
+2811 /opt/s038/usr/bin/sodam
+=== fds of the new pid (wayland socket?) ===
+=== env of the new pid ===
+=== WAYLAND_DEBUG: pointer / seat / surface lines ===
+=== WAYLAND_DEBUG: first 25 lines ===
+=== WSLg weston.log tail ===
+[22:01:14.244] Client: ClientGetAppidReq: WindowId:0xb does not have appId, or not top level window.
+[22:01:16.031] xfixes selection notify event: owner 2097153
+[22:01:16.031] our window, skipping
+[22:04:37.530] xfixes selection notify event: owner 2097153
+[22:04:37.531] our window, skipping
+[22:04:44.274] 
+
+
+RDP clipboard_data_source_send new (0x7bcbc0002250:published:fd 87) vs prev (0x7bcbc0002110:cancel pending:fd 86): outstanding RDP data request (client to server)
+
+
+[22:04:44.277] xfixes selection notify event: owner 2097153
+[22:04:44.277] our window, skipping
+[22:04:44.277] xfixes selection notify event: owner 2097153
+[22:04:44.278] our window, skipping
+[22:05:31.146] xfixes selection notify event: owner 2097153
+[22:05:31.146] our window, skipping
+[22:06:14.232] rdp_rail_idle_handler is called on peer_ctx:0x58e1c2897bd0
+=== cleanup: kill ONLY the pid we started ===
+1 /init
+2811 /opt/s038/usr/bin/sodam
+=== done ===

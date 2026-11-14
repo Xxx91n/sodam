@@ -1,0 +1,24 @@
+=== sodam processes ===
+1 /init
+2811 /opt/s038/usr/bin/sodam
+=== window state ===
+wid=6291457 name=SodaM
+  Absolute upper-left X:  478
+  Absolute upper-left Y:  220
+  Width: 980
+  Height: 640
+  Map State: IsViewable
+WINDOW=6291457 X=478 Y=220 WIDTH=980 HEIGHT=640 SCREEN=0 
+=== pointer ===
+X=1213
+Y=540
+SCREEN=0
+WINDOW=6291457
+=== tools installed for the probe ===
+xorg-xev 1.2.7-1
+xorg-xinput 1.6.4-2
+xorg-xprop 1.2.8-1
+xorg-xwininfo 1.1.7-1
+xdotool 4.20260303.1-1
+=== glibc ===
+ldd (GNU libc) 2.44

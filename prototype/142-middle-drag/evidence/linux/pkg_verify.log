@@ -1,0 +1,54 @@
+=== tools ===
+tar=/usr/sbin/tar
+zstd=/usr/sbin/zstd
+bsdtar=/usr/sbin/bsdtar
+ar=/usr/sbin/ar
+readelf=/usr/sbin/readelf
+objdump=/usr/sbin/objdump
+ldd=/usr/sbin/ldd
+strings=/usr/sbin/strings
+grep=/usr/sbin/grep
+=== system glibc ===
+ldd (GNU libc) 2.44
+=== official sha256 (from Release SHA256SUMS) ===
+bea875eb4862a50f7e37e46a049b8bda82aca914108233579c0b278625d778be  sodam-0.3.8-1-x86_64.pkg.tar.zst
+143f8bddac27f5fb349204c83a883f8a41d75150c567d2c4077f025feefe7866  sodam_0.3.9_amd64.deb
+=== downloaded sha256 ===
+bea875eb4862a50f7e37e46a049b8bda82aca914108233579c0b278625d778be  /mnt/c/Windows/Temp/sodam142-pkgs/sodam-0.3.8-1-x86_64.pkg.tar.zst
+143f8bddac27f5fb349204c83a883f8a41d75150c567d2c4077f025feefe7866  /mnt/c/Windows/Temp/sodam142-pkgs/sodam_0.3.9_amd64.deb
+=== unpack v0.3.8 Arch package ===
+tar_exit=0
+--- compare: package binary vs what WSL is running ---
+df11c9df26a89d61461777780350df59138bb9c0172a1cada8366db954fbbb9e  /tmp/p038/usr/bin/sodam
+df11c9df26a89d61461777780350df59138bb9c0172a1cada8366db954fbbb9e  /opt/s038/usr/bin/sodam
+df11c9df26a89d61461777780350df59138bb9c0172a1cada8366db954fbbb9e  /usr/bin/sodam
+=== unpack v0.3.9 deb ===
+total 15268
+drwxr-xr-x 2 root root     4096 Nov 14 22:05 .
+drwxrwxrwt 5 root root     4096 Nov 14 22:05 ..
+-rw-r--r-- 1 root root      759 Nov 14 22:05 control.tar.zst
+-rw-r--r-- 1 root root 15616936 Nov 14 22:05 data.tar.zst
+-rw-r--r-- 1 root root        4 Nov 14 22:05 debian-binary
+ar_exit=0
+unpacked /tmp/p039/control.tar.zst
+unpacked /tmp/p039/data.tar.zst
+--- deb control Version ---
+Package: sodam
+Version: 0.3.9-1
+Architecture: amd64
+--- binaries in deb ---
+/tmp/p039/usr/bin/sodam  sha=356db624f46f93ec48be1a76800fe4e530bd45730aae08d76f7bab39f9c3b551
+=== highest GLIBC symbol required (explains Ubuntu 24.04 failure) ===
+-- /tmp/p038/usr/bin/sodam --
+GLIBC_2.33
+GLIBC_2.34
+GLIBC_2.35
+GLIBC_2.39
+GLIBC_2.43
+-- /tmp/p039/usr/bin/sodam --
+GLIBC_2.33
+GLIBC_2.34
+GLIBC_2.35
+GLIBC_2.39
+GLIBC_2.43
+=== done ===

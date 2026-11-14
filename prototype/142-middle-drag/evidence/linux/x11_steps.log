@@ -1,0 +1,60 @@
+wid=6291457 pid=2811 geo=478,220 980x640
+screen=1920 1026x
+X server=
+backend_env=DISPLAY=:0 
+pointer devices:
+⎡ Virtual core pointer                    	id=2	[master pointer  (3)]
+⎜   ↳ Virtual core XTEST pointer              	id=4	[slave  pointer  (2)]
+⎜   ↳ xwayland-pointer:19                     	id=6	[slave  pointer  (2)]
+⎜   ↳ xwayland-relative-pointer:19            	id=7	[slave  pointer  (2)]
+⎜   ↳ xwayland-pointer-gestures:19            	id=8	[slave  pointer  (2)]
+⎣ Virtual core keyboard                   	id=3	[master keyboard (2)]
+    ↳ Virtual core XTEST keyboard             	id=5	[slave  keyboard (3)]
+    ↳ xwayland-keyboard:19                    	id=9	[slave  keyboard (3)]
+inside=(1213,540) outside=(1538,540)
+21:59:11.268 00 move into window
+21:59:11.756 01 MIDDLE DOWN inside
+21:59:12.175 02 drag step 1 -> (1267,540) inside_window=yes
+21:59:12.422 02 drag step 2 -> (1321,540) inside_window=yes
+21:59:12.672 02 drag step 3 -> (1375,540) inside_window=yes
+21:59:12.920 02 drag step 4 -> (1429,540) inside_window=yes
+21:59:13.156 02 drag step 5 -> (1483,540) inside_window=no
+21:59:13.406 02 drag step 6 -> (1538,540) inside_window=no
+21:59:13.672 03 MIDDLE UP outside window
+21:59:14.194 04 move without buttons (3 steps, still outside)
+21:59:15.249 05 control: MIDDLE DOWN + UP inside window
+21:59:16.341 06 control: MIDDLE press, minimize window, MIDDLE UP
+21:59:19.215 done
+=== XI2 全局原始输入（Button 相关）===
+EVENT type 15 (RawButtonPress)
+    detail: 2
+EVENT type 4 (ButtonPress)
+    detail: 2
+EVENT type 16 (RawButtonRelease)
+    detail: 2
+EVENT type 5 (ButtonRelease)
+    detail: 2
+EVENT type 15 (RawButtonPress)
+    detail: 2
+EVENT type 4 (ButtonPress)
+    detail: 2
+EVENT type 16 (RawButtonRelease)
+    detail: 2
+EVENT type 5 (ButtonRelease)
+    detail: 2
+EVENT type 15 (RawButtonPress)
+    detail: 2
+EVENT type 4 (ButtonPress)
+    detail: 2
+EVENT type 16 (RawButtonRelease)
+    detail: 2
+EVENT type 5 (ButtonRelease)
+    detail: 2
+=== XI2 行数 ===
+518
+=== 事件摘要（只看按键和进出窗口）===
+LeaveNotify event, window 0x600001,
+EnterNotify event, window 0x600001,
+=== MotionNotify 条数 ===
+0
+=== 窗口外那几步的坐标（root:）===

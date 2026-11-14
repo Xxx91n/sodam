@@ -1,0 +1,14 @@
+=== sodam pids before: 2811 ===
+wrapper_pid=4619
+=== sodam pids after 7s: 2811 ===
+wrapper alive: no
+new sodam pids: none
+=== raw stderr/stdout size=134 ===
+dbus[4622]: Unable to set up transient service directory: XDG_RUNTIME_DIR "/mnt/wslg/runtime-dir" is owned by uid 1000, not our uid 0
+=== WAYLAND_DEBUG pointer lines ===
+=== files the new instance wrote under its HOME ===
+=== exit code of wrapper ===
+exit=0
+=== cleanup: kill ONLY the new pids + our wrapper ===
+=== sodam pids left: 2811  ===
+=== done ===

@@ -1,0 +1,179 @@
+wid=0x600001 inside=(1213,540) outside=(1538,540)
+WARNING: running xinput against an Xwayland server. See the xinput man page for details.
+Virtual core XTEST pointer              	id=4	[slave  pointer  (2)]
+	Reporting 3 classes:
+		Class originated from: 4. Type: XIButtonClass
+		Buttons supported: 10
+		Button labels: "Button Left" "Button Middle" "Button Right" "Button Wheel Up" "Button Wheel Down" "Button Horiz Wheel Left" "Button Horiz Wheel Right" None None None
+		Button state:
+		Class originated from: 4. Type: XIValuatorClass
+		Detail for Valuator 0:
+		  Label: Rel X
+		  Range: -1.000000 - -1.000000
+		  Resolution: 0 units/m
+		  Mode: relative
+		Class originated from: 4. Type: XIValuatorClass
+		Detail for Valuator 1:
+		  Label: Rel Y
+		  Range: -1.000000 - -1.000000
+		  Resolution: 0 units/m
+		  Mode: relative
+
+EVENT type 15 (RawButtonPress)
+    device: 4 (4)
+    time:   3221348
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 4 (ButtonPress)
+    device: 4 (4)
+    time: 3221348
+    detail: 2
+    flags: 
+    root: 1213.00/540.00
+    event: 180.00/140.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0xa00001 child 0x0
+EVENT type 17 (RawMotion)
+    device: 4 (4)
+    time:   3221710
+    detail: 0
+    flags: 
+    valuators:
+          0: 1321.00 (1321.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3221710
+    detail: 0
+    flags: 
+    root: 1213.00/540.00
+    event: 180.00/140.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1321.00
+        1: 540.00
+    windows: root 0x390 event 0xa00001 child 0x0
+EVENT type 17 (RawMotion)
+    device: 4 (4)
+    time:   3221899
+    detail: 0
+    flags: 
+    valuators:
+          0: 1429.00 (1429.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3221899
+    detail: 0
+    flags: 
+    root: 1321.00/540.00
+    event: 288.00/140.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1429.00
+        1: 540.00
+    windows: root 0x390 event 0xa00001 child 0x0
+EVENT type 17 (RawMotion)
+    device: 4 (4)
+    time:   3222081
+    detail: 0
+    flags: 
+    valuators:
+          0: 1538.00 (1538.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3222081
+    detail: 0
+    flags: 
+    root: 1429.00/540.00
+    event: 396.00/140.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 540.00
+    windows: root 0x390 event 0xa00001 child 0x0
+EVENT type 16 (RawButtonRelease)
+    device: 4 (4)
+    time:   3222282
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 5 (ButtonRelease)
+    device: 4 (4)
+    time: 3222282
+    detail: 2
+    flags: 
+    root: 1538.00/540.00
+    event: 505.00/140.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0xa00001 child 0x0
+EVENT type 8 (Leave)
+    device: 4 (4)
+    time:   3222282
+    windows: root 0x390 event 0xa00001 child 0x0
+    mode: NotifyUngrab (detail NotifyAncestor)
+    flags: [focus] [same screen]
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1538.00 / 540.00
+    event x/y: 505.00 / 140.00
+EVENT type 17 (RawMotion)
+    device: 4 (4)
+    time:   3222738
+    detail: 0
+    flags: 
+    valuators:
+          0: 1213.00 (1213.00)
+          1: 540.00 (540.00)
+
+=== ButtonPress / ButtonRelease blocks ===
+EVENT type 4 (ButtonPress)
+    device: 4 (4)
+    time: 3221348
+    detail: 2
+    flags: 
+    root: 1213.00/540.00
+    event: 180.00/140.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0xa00001 child 0x0
+EVENT type 17 (RawMotion)
+--
+EVENT type 5 (ButtonRelease)
+    device: 4 (4)
+    time: 3222282
+    detail: 2
+    flags: 
+    root: 1538.00/540.00
+    event: 505.00/140.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0xa00001 child 0x0
+EVENT type 8 (Leave)
+=== all 'windows:' lines ===
+      8     windows: root 0x390 event 0xa00001 child 0x0
+      1 === all 'windows:' lines ===

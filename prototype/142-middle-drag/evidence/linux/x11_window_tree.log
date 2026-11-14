@@ -1,0 +1,51 @@
+=== root tree (top 60) ===
+xwininfo: can not set locale properly
+
+xwininfo: Window id: 0x390 (the root window) (has no name)
+
+  Root window id: 0x390 (the root window) (has no name)
+  Parent window id: 0x0 (none)
+     6 children:
+     0x200420 (has no name): ()  1056x737+440+161  +440+161
+        1 child:
+        0x600001 "SodaM": ("SodaM" "SodaM")  980x640+38+59  +478+220
+     0x600000 (has no name): ()  1x1+0+0  +0+0
+     0x800000 (has no name): ()  1x1+0+0  +0+0
+     0x200027 "Weston WM": ()  10x10+0+0  +0+0
+     0x200002 (has no name): ()  8192x8192+0+0  +0+0
+     0x200001 (has no name): ()  10x10+0+0  +0+0
+
+=== windows owned by sodam pid 2811 ===
+wid=6291457 dec=0x600001 name=SodaM
+=== props of 0x600001 ===
+WM_CLASS(STRING) = "SodaM", "SodaM"
+WM_NAME(STRING) = "SodaM"
+_NET_WM_PID(CARDINAL) = 2811
+_NET_WM_WINDOW_TYPE:  not found.
+=== props of 0x200420 ===
+WM_CLASS:  not found.
+WM_NAME:  not found.
+_NET_WM_PID:  not found.
+_NET_WM_WINDOW_TYPE:  not found.
+=== geometry of both ===
+-- 0x600001 --
+  Absolute upper-left X:  478
+  Absolute upper-left Y:  220
+  Relative upper-left X:  38
+  Relative upper-left Y:  59
+  Width: 980
+  Height: 640
+  Map State: IsViewable
+-- 0x200420 --
+  Absolute upper-left X:  440
+  Absolute upper-left Y:  161
+  Relative upper-left X:  440
+  Relative upper-left Y:  161
+  Width: 1056
+  Height: 737
+  Map State: IsViewable
+=== window at the probe point ===
+X=1213
+Y=540
+SCREEN=0
+WINDOW=6291457

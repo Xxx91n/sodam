@@ -1,0 +1,518 @@
+WARNING: running xinput against an Xwayland server. See the xinput man page for details.
+⎡ Virtual core pointer                    	id=2	[master pointer  (3)]
+⎜   ↳ Virtual core XTEST pointer              	id=4	[slave  pointer  (2)]
+⎜   ↳ xwayland-pointer:19                     	id=6	[slave  pointer  (2)]
+⎜   ↳ xwayland-relative-pointer:19            	id=7	[slave  pointer  (2)]
+⎜   ↳ xwayland-pointer-gestures:19            	id=8	[slave  pointer  (2)]
+⎣ Virtual core keyboard                   	id=3	[master keyboard (2)]
+    ↳ Virtual core XTEST keyboard             	id=5	[slave  keyboard (3)]
+    ↳ xwayland-keyboard:19                    	id=9	[slave  keyboard (3)]
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3098172
+    detail: 0
+    flags: 
+    valuators:
+          0: 1213.00 (1213.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3098172
+    detail: 0
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1213.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 15 (RawButtonPress)
+    device: 2 (4)
+    time:   3098642
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 4 (ButtonPress)
+    device: 4 (4)
+    time: 3098642
+    detail: 2
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 7 (Enter)
+    device: 4 (4)
+    time:   3098642
+    windows: root 0x390 event 0x390 child 0x0
+    mode: NotifyGrab (detail NotifyInferior)
+    flags:  [same screen]
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1213.00 / 540.00
+    event x/y: 1213.00 / 540.00
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3099062
+    detail: 0
+    flags: 
+    valuators:
+          0: 1267.00 (1267.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3099062
+    detail: 0
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1267.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3099309
+    detail: 0
+    flags: 
+    valuators:
+          0: 1321.00 (1321.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3099309
+    detail: 0
+    flags: 
+    root: 1267.00/540.00
+    event: 1267.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1321.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3099555
+    detail: 0
+    flags: 
+    valuators:
+          0: 1375.00 (1375.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3099555
+    detail: 0
+    flags: 
+    root: 1321.00/540.00
+    event: 1321.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1375.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3099798
+    detail: 0
+    flags: 
+    valuators:
+          0: 1429.00 (1429.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3099798
+    detail: 0
+    flags: 
+    root: 1375.00/540.00
+    event: 1375.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1429.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3100041
+    detail: 0
+    flags: 
+    valuators:
+          0: 1483.00 (1483.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3100041
+    detail: 0
+    flags: 
+    root: 1429.00/540.00
+    event: 1429.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1483.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3100298
+    detail: 0
+    flags: 
+    valuators:
+          0: 1538.00 (1538.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3100298
+    detail: 0
+    flags: 
+    root: 1483.00/540.00
+    event: 1483.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 16 (RawButtonRelease)
+    device: 2 (4)
+    time:   3100555
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 5 (ButtonRelease)
+    device: 4 (4)
+    time: 3100555
+    detail: 2
+    flags: 
+    root: 1538.00/540.00
+    event: 1538.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 7 (Enter)
+    device: 2 (2)
+    time:   3100555
+    windows: root 0x390 event 0x390 child 0x0
+    mode: NotifyUngrab (detail NotifyInferior)
+    flags:  [same screen]
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1538.00 / 540.00
+    event x/y: 1538.00 / 540.00
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3101074
+    detail: 0
+    flags: 
+    valuators:
+          0: 1538.00 (1538.00)
+          1: 560.00 (560.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3101074
+    detail: 0
+    flags: 
+    root: 1538.00/540.00
+    event: 1538.00/540.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 560.00
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 6 (Motion)
+    device: 2 (4)
+    time: 3101074
+    detail: 0
+    flags: 
+    root: 1538.00/560.00
+    event: 1538.00/560.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 560.00
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3101293
+    detail: 0
+    flags: 
+    valuators:
+          0: 1538.00 (1538.00)
+          1: 600.00 (600.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3101293
+    detail: 0
+    flags: 
+    root: 1538.00/560.00
+    event: 1538.00/560.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 600.00
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 6 (Motion)
+    device: 2 (4)
+    time: 3101293
+    detail: 0
+    flags: 
+    root: 1538.00/600.00
+    event: 1538.00/600.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 600.00
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3101522
+    detail: 0
+    flags: 
+    valuators:
+          0: 1538.00 (1538.00)
+          1: 660.00 (660.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3101522
+    detail: 0
+    flags: 
+    root: 1538.00/600.00
+    event: 1538.00/600.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 660.00
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 6 (Motion)
+    device: 2 (4)
+    time: 3101522
+    detail: 0
+    flags: 
+    root: 1538.00/660.00
+    event: 1538.00/660.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1538.00
+        1: 660.00
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3102134
+    detail: 0
+    flags: 
+    valuators:
+          0: 1213.00 (1213.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3102134
+    detail: 0
+    flags: 
+    root: 1538.00/660.00
+    event: 1538.00/660.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1213.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x0
+EVENT type 8 (Leave)
+    device: 2 (4)
+    time:   3102134
+    windows: root 0x390 event 0x390 child 0x0
+    mode: NotifyNormal (detail NotifyInferior)
+    flags:  [same screen]
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1213.00 / 540.00
+    event x/y: 1213.00 / 540.00
+EVENT type 15 (RawButtonPress)
+    device: 2 (4)
+    time:   3102483
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 4 (ButtonPress)
+    device: 4 (4)
+    time: 3102483
+    detail: 2
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 7 (Enter)
+    device: 4 (4)
+    time:   3102483
+    windows: root 0x390 event 0x390 child 0x0
+    mode: NotifyGrab (detail NotifyInferior)
+    flags:  [same screen]
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1213.00 / 540.00
+    event x/y: 1213.00 / 540.00
+EVENT type 16 (RawButtonRelease)
+    device: 2 (4)
+    time:   3102798
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 5 (ButtonRelease)
+    device: 4 (4)
+    time: 3102798
+    detail: 2
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 8 (Leave)
+    device: 4 (4)
+    time:   3102798
+    windows: root 0x390 event 0x390 child 0x0
+    mode: NotifyUngrab (detail NotifyInferior)
+    flags:  [same screen]
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1213.00 / 540.00
+    event x/y: 1213.00 / 540.00
+EVENT type 17 (RawMotion)
+    device: 2 (4)
+    time:   3103237
+    detail: 0
+    flags: 
+    valuators:
+          0: 1213.00 (1213.00)
+          1: 540.00 (540.00)
+
+EVENT type 6 (Motion)
+    device: 4 (4)
+    time: 3103237
+    detail: 0
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+        0: 1213.00
+        1: 540.00
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 15 (RawButtonPress)
+    device: 2 (4)
+    time:   3103573
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 4 (ButtonPress)
+    device: 4 (4)
+    time: 3103573
+    detail: 2
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 7 (Enter)
+    device: 4 (4)
+    time:   3103573
+    windows: root 0x390 event 0x390 child 0x0
+    mode: NotifyGrab (detail NotifyInferior)
+    flags:  [same screen]
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1213.00 / 540.00
+    event x/y: 1213.00 / 540.00
+EVENT type 16 (RawButtonRelease)
+    device: 2 (4)
+    time:   3104570
+    detail: 2
+    flags: 
+    valuators:
+
+EVENT type 5 (ButtonRelease)
+    device: 4 (4)
+    time: 3104570
+    detail: 2
+    flags: 
+    root: 1213.00/540.00
+    event: 1213.00/540.00
+    buttons: 2
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    valuators:
+    windows: root 0x390 event 0x390 child 0x200420
+EVENT type 8 (Leave)
+    device: 4 (4)
+    time:   3104570
+    windows: root 0x390 event 0x390 child 0x0
+    mode: NotifyUngrab (detail NotifyInferior)
+    flags:  [same screen]
+    buttons:
+    modifiers: locked 0 latched 0 base 0 effective: 0
+    group: locked 0 latched 0 base 0 effective: 0
+    root x/y:  1213.00 / 540.00
+    event x/y: 1213.00 / 540.00

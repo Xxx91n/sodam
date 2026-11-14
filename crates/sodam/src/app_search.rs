@@ -349,6 +349,8 @@ impl Root {
             album,
             tracks: Vec::new(),
         });
+        // 重试或同页点专辑时 set_nav 可能短路，列表 reset 后旧拖动起点不能留。
+        self.middle_drag.finish();
         self.album_detail_list.reset(1);
         self.loading_album = true;
         self.set_nav(Nav::Album, cx);

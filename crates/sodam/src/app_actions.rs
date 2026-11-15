@@ -2262,6 +2262,16 @@ impl Root {
 
     /// 上报「中键按下」：记下起点和这个区域当时的滚动位置。
     fn begin_middle_drag_on(&mut self, target: DragTarget, y: f32) {
+        // 菜单/弹窗盖在页面上时不起步，别让手势隔着它们滚到背景（#154）。
+        // 登录弹窗的显示条件与 render 保持一致：没填 Cookie 才弹。
+        if self.any_menu_open() || (self.login_modal_open && self.settings.cookie.trim().is_empty())
+        {
+            return;
+        }
+        // 队列抽屉开着时只许滚抽屉自己，背景页面一律拦下（#154）。
+        if !crate::ui::middle_drag::begin_allowed(target, self.queue_open, self.nav) {
+            return;
+        }
         // 上一次手势的补欠账可能还在排队；新按下就作废，别让它用旧起点推进新拖动。
         self.middle_drag_settle = None;
         let top = self.drag_top(target);

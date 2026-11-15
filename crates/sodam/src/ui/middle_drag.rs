@@ -62,6 +62,15 @@ impl DragTarget {
 /// 起步死区：鼠标没挪够 2px 就不滚，免得中键轻点让页面抖一下。
 const DEAD_ZONE: f32 = 2.0;
 
+/// 这次「中键按下」该不该起步。
+///
+/// 队列抽屉开着的时候它盖在背景页面旁边，只允许滚抽屉自己（`Queue`），
+/// 背景页面一律拦下，不然一条手势会把两块内容拉扯在一起（#154）。
+/// 歌词页没有侧边抽屉（队列换成了内嵌面板，跟歌词区并排），照常起步。
+pub fn begin_allowed(target: DragTarget, queue_drawer_open: bool, nav: Nav) -> bool {
+    !(queue_drawer_open && nav != Nav::Lyrics && target != DragTarget::Queue)
+}
+
 /// 按下时记下的起点。`top` 是内容离顶部的距离，0 表示已经在最顶上。
 #[derive(Clone, Copy)]
 struct Anchor {
@@ -430,6 +439,74 @@ mod tests {
             DragTarget::PlaylistGrid,
         ] {
             assert!(!target.is_list(), "{target:?}");
+        }
+    }
+
+    /// 抽屉开着时只许滚抽屉；背景页面（含设置页这些抽屉背后的滚动区）全部拦下。
+    #[test]
+    fn drawer_open_blocks_background_targets() {
+        let background = [
+            DragTarget::Settings,
+            DragTarget::SearchGroups,
+            DragTarget::SearchTracks,
+            DragTarget::SearchArtists,
+            DragTarget::SearchAlbums,
+            DragTarget::SearchPlaylists,
+            DragTarget::PlaylistGrid,
+            DragTarget::Lyrics,
+            DragTarget::Scenes,
+            DragTarget::LikedDetail,
+            DragTarget::LibraryDetail,
+            DragTarget::SearchPlaylistDetail,
+            DragTarget::ArtistDetail,
+            DragTarget::AlbumDetail,
+        ];
+        for target in background {
+            assert!(
+                !super::begin_allowed(target, true, Nav::Settings),
+                "{target:?}"
+            );
+        }
+        assert!(super::begin_allowed(DragTarget::Queue, true, Nav::Settings));
+    }
+
+    /// 抽屉没开，谁都照常起步。
+    #[test]
+    fn drawer_closed_allows_every_target() {
+        let all = [
+            DragTarget::Settings,
+            DragTarget::Queue,
+            DragTarget::SearchGroups,
+            DragTarget::SearchTracks,
+            DragTarget::SearchArtists,
+            DragTarget::SearchAlbums,
+            DragTarget::SearchPlaylists,
+            DragTarget::PlaylistGrid,
+            DragTarget::Lyrics,
+            DragTarget::Scenes,
+            DragTarget::LikedDetail,
+            DragTarget::LibraryDetail,
+            DragTarget::SearchPlaylistDetail,
+            DragTarget::ArtistDetail,
+            DragTarget::AlbumDetail,
+        ];
+        for target in all {
+            assert!(
+                super::begin_allowed(target, false, Nav::Settings),
+                "{target:?}"
+            );
+        }
+    }
+
+    /// 歌词页没有侧边抽屉：队列是内嵌面板，跟歌词区并排，互不遮挡。
+    /// 抽屉开关在这个页面不拦任何目标。
+    #[test]
+    fn lyrics_page_has_no_side_drawer() {
+        for target in [DragTarget::Lyrics, DragTarget::Queue] {
+            assert!(
+                super::begin_allowed(target, true, Nav::Lyrics),
+                "{target:?}"
+            );
         }
     }
 }

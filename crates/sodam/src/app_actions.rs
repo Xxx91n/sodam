@@ -33,11 +33,30 @@ impl Root {
     /// 设置页贡献者墙：用 contrib.rocks 的组合图，后台拉取并缓存在内存。
     ///
     /// 不用 GitHub API，因此没有 token / 请求配额问题；贡献者增减由服务自动更新。
+    ///
+    /// 渲染路径只保证「没图就拉一次」：失败后不自动重试。否则断网时每次重绘都会
+    /// 再发一轮后台请求，而失败标记又在拉取前被清掉，用户永远看不到失败态（#135）。
     pub fn ensure_contributors(&mut self, cx: &mut Context<Self>) {
-        if self.contributors_image.is_some() || self.contributors_fetching {
+        if self.contributors_image.is_some()
+            || self.contributors_fetching
+            || self.contributors_failed
+        {
+            return;
+        }
+        self.fetch_contributors(cx);
+    }
+
+    /// 用户点「加载失败，点击重试」：先清掉失败标记，再拉一次。
+    pub fn retry_contributors(&mut self, cx: &mut Context<Self>) {
+        if self.contributors_fetching {
             return;
         }
         self.contributors_failed = false;
+        self.fetch_contributors(cx);
+        cx.notify();
+    }
+
+    fn fetch_contributors(&mut self, cx: &mut Context<Self>) {
         self.contributors_fetching = true;
         let work =
             cx.background_spawn(async { sodam_core::contributors::fetch_contributors_svg() });

@@ -1450,7 +1450,7 @@ pub(crate) fn settings_view(root: &mut Root, cx: &mut Context<Root>) -> AnyEleme
                                 .text_size(theme::Text::Tiny.size())
                                 .text_color(theme::text_muted())
                                 .on_click(cx.listener(|root, _event: &ClickEvent, _window, cx| {
-                                    root.ensure_contributors(cx);
+                                    root.retry_contributors(cx);
                                 }))
                                 .child(root.tr("加载失败，点击重试"))
                                 .into_any_element()

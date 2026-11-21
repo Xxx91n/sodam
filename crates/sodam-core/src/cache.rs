@@ -153,9 +153,7 @@ pub const COVER_LIMIT_MB: u64 = 512;
 /// 返回删掉的路径，好让调用方只清理这些文件对应的内存映射，不必全表扫盘。
 /// 封面不建立租约，正在被读的文件若被系统拒绝删除，下次维护再试。
 ///
-/// `last_seen` 是调用方提供的「路径 → 最近一次显示时间」，与文件 mtime 取较晚者排序。
-/// 没有记录的路径退回 mtime，传空表时行为与纯 mtime 淘汰一致。键必须与扫描得到的路径
-/// 完全一致（同一缓存目录、同一拼写）；对不上只会静默退回 mtime，不会误删别的文件。
+/// `last_seen` 是「文件路径 → 最近一次显示时间」；没有记录的路径按 mtime 排。
 fn trim_covers_with<F: Fn(&Path) -> bool>(
     dir: &Path,
     limit_bytes: u64,
@@ -983,7 +981,7 @@ mod tests {
         assert!(original.exists());
     }
 
-    /// #217：超限时按组内最后使用时间排序，最旧那组的缩略图和原图一起删，不剩半套。
+    /// 超限时按组内最后使用时间排序，最旧那组的缩略图和原图一起删，不剩半套。
     #[test]
     fn trim_covers_evicts_oldest_group_as_a_whole() {
         let dir = tempfile::tempdir().unwrap();

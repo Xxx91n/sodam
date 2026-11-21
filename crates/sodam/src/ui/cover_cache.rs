@@ -397,7 +397,7 @@ mod tests {
         )])))
     }
 
-    /// #224：同一路径的不同解码尺寸取最近一次显示；解码失败不算显示。
+    /// 同一路径的不同解码尺寸取最近一次显示；解码失败不算显示。
     #[test]
     fn last_shown_times_reports_latest_display_per_path() {
         use std::time::Duration;

@@ -1004,7 +1004,7 @@ mod tests {
         );
     }
 
-    /// #224：最近显示过、但 mtime 很旧的封面，要排在从没显示过的较新封面之后，
+    /// 最近显示过、但 mtime 很旧的封面，要排在从没显示过的较新封面之后，
     /// 整组（缩略图 + 原图）一起保住。
     #[test]
     fn trim_covers_prefers_last_shown_over_stale_mtime() {
@@ -1029,7 +1029,7 @@ mod tests {
         assert!(!never_shown.exists());
     }
 
-    /// #224：显示之后又重新下载过的封面，mtime 比显示时间新，排序键必须取较晚的 mtime。
+    /// 显示之后又重新下载过的封面，mtime 比显示时间新，排序键必须取较晚的 mtime。
     /// 若实现退化成「有 last_seen 就只看 last_seen」，这张会被当成最旧的一组删掉。
     #[test]
     fn trim_covers_keeps_redownloaded_cover_over_older_mtime() {

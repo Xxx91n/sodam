@@ -18,7 +18,11 @@ fn cover_file_usable(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 命中缓存时把修改时间推到当前，作为封面淘汰的「最后访问时间」。
+/// 命中磁盘缓存时把修改时间推到当前。
+///
+/// 这只是封面淘汰的**兜底**信号：界面命中内存缓存时不会走到这里，所以 mtime 大多只代表
+/// 「最后下载/落盘」。真正的最近显示时间由界面在布局/绘制时记录、每次后台维护前采样后
+/// 传给淘汰器，两者取较晚者排序。
 /// 更新失败（只读、刚好被淘汰等）就算了，本次照样用这张图。
 fn touch_cover_file(path: &std::path::Path) {
     let _ = std::fs::OpenOptions::new()
@@ -1137,7 +1141,7 @@ mod tests {
         assert!(!cover_file_usable(&dir_path), "目录不是缓存文件");
     }
 
-    /// #217：命中缓存把修改时间推到当前，给封面 LRU 当「最后访问时间」。
+    /// #217：命中磁盘缓存把修改时间推到当前，作为 LRU 的兜底键。
     #[test]
     fn touching_cover_refreshes_modified_time() {
         use std::time::{Duration, SystemTime};

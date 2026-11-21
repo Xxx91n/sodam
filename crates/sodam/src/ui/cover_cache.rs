@@ -8,8 +8,9 @@
 //! （sonora 实测 footprint 67MB / IOAccelerator 8.4MB。）
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use gpui::{
     App, AppContext, Asset, AssetLogger, Entity, Global, ImageCache, ImageCacheError, RenderImage,
@@ -160,6 +161,43 @@ impl CoverImageCache {
         CACHE_BYTES.max(self.screen)
     }
 
+    /// 最近显示时间快照：`路径 → 最后一次布局/绘制时见到的墙钟时间`。
+    ///
+    /// `load_at` 在每次布局/绘制命中时把条目的 `used` 推到当前；这里把进程内单调时钟
+    /// 换算成可与文件 mtime 比较的 [`SystemTime`]。只在渲染线程只读采样，不加锁、不碰
+    /// 文件系统。同一路径可能因目标边长不同而有多条缓存，取其中最近的一次；解码失败的
+    /// 条目没画出来，不算显示。快照只覆盖仍在内存缓存里的封面，其余封面会退回 mtime。
+    pub fn last_shown_times(&self) -> HashMap<PathBuf, SystemTime> {
+        self.last_shown_times_with(Instant::now(), SystemTime::now())
+    }
+
+    fn last_shown_times_with(
+        &self,
+        now: Instant,
+        wall: SystemTime,
+    ) -> HashMap<PathBuf, SystemTime> {
+        let mut latest: HashMap<&Path, Instant> = HashMap::new();
+        for ((resource, _edge), cached) in &self.items {
+            if cached.value.is_err() {
+                continue;
+            }
+            let Resource::Path(path) = resource else {
+                continue;
+            };
+            let path = path.as_ref();
+            let seen = latest.entry(path).or_insert(cached.used);
+            *seen = (*seen).max(cached.used);
+        }
+        latest
+            .into_iter()
+            .filter_map(|(path, used)| {
+                // 系统时间异常时宁可丢掉这条记录，让 mtime 兜底，也不 panic。
+                wall.checked_sub(now.saturating_duration_since(used))
+                    .map(|shown| (path.to_path_buf(), shown))
+            })
+            .collect()
+    }
+
     /// 按「资源 + 目标边长」取图；未解码完返回 `None`（gpui 会在完成后重绘）。
     pub fn load_at(
         &mut self,
@@ -263,6 +301,13 @@ impl CoverImageCache {
     }
 }
 
+/// 在渲染线程采样一次「最近显示时间」，供后台封面淘汰使用。
+///
+/// 不要在 `CoverImageCache::update` 内部调用：那里已经可变借用了缓存实体。
+pub fn shown_snapshot(cx: &mut App) -> HashMap<PathBuf, SystemTime> {
+    CoverImageCache::entity(cx).read(cx).last_shown_times()
+}
+
 impl ImageCache for CoverImageCache {
     fn load(
         &mut self,
@@ -351,5 +396,54 @@ mod tests {
             DynamicImage::ImageRgba8(RgbaImage::from_pixel(32, 32, image::Rgba([1, 2, 3, 255])));
         let out = artwork_frame(image, 128);
         assert_eq!((out.width(), out.height()), (32, 32));
+    }
+
+    fn decoded_1x1() -> Result<Arc<RenderImage>, ImageCacheError> {
+        Ok(Arc::new(RenderImage::new(vec![Frame::new(
+            RgbaImage::new(1, 1),
+        )])))
+    }
+
+    /// #224：同一路径的不同解码尺寸取最近一次显示；解码失败不算显示。
+    #[test]
+    fn last_shown_times_reports_latest_display_per_path() {
+        use std::time::Duration;
+
+        let mut cache = empty_cache(0);
+        let path = PathBuf::from("/cache/covers/0000-160.img");
+        let failed = PathBuf::from("/cache/covers/0001-160.img");
+        let now = Instant::now();
+        let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let entry = |value, used| Cached {
+            value,
+            bytes: 0,
+            used,
+        };
+
+        cache.items.insert(
+            (Resource::from(path.clone()), 64),
+            entry(decoded_1x1(), now - Duration::from_secs(30)),
+        );
+        cache.items.insert(
+            (Resource::from(path.clone()), 160),
+            entry(decoded_1x1(), now - Duration::from_secs(5)),
+        );
+        cache.items.insert(
+            (Resource::from(failed.clone()), 64),
+            entry(
+                Err(ImageCacheError::Io(Arc::new(std::io::Error::other(
+                    "decode failed",
+                )))),
+                now,
+            ),
+        );
+
+        let shown = cache.last_shown_times_with(now, wall);
+        assert_eq!(
+            shown.get(&path),
+            Some(&(wall - Duration::from_secs(5))),
+            "同一路径取最近一次显示"
+        );
+        assert!(!shown.contains_key(&failed), "没画出来的不能当成显示");
     }
 }

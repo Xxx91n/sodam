@@ -145,16 +145,21 @@ fn cover_group_key(path: &Path) -> String {
 /// 封面缓存硬上限：缩略图加原图合计，固定 512 MiB，不做用户配置项。
 pub const COVER_LIMIT_MB: u64 = 512;
 
-/// 按组内最后访问时间淘汰封面缓存，返回 `(剩余字节数, 实际删掉的文件路径)`。
+/// 按组内最后使用时间淘汰封面缓存，返回 `(剩余字节数, 实际删掉的文件路径)`。
 ///
 /// 目录里所有普通文件都计入总量（含原图子目录和临时文件）；24 小时内的 `.part`
-/// 只统计不淘汰。同一张封面的缩略图与原图成组，组内取最新访问时间做 LRU 键，
+/// 只统计不淘汰。同一张封面的缩略图与原图成组，组内取最新使用时间做 LRU 键，
 /// 从最久没看的组开始整组删，删到不超上限为止。删除成功才算释放，失败不中断。
 /// 返回删掉的路径，好让调用方只清理这些文件对应的内存映射，不必全表扫盘。
 /// 封面不建立租约，正在被读的文件若被系统拒绝删除，下次维护再试。
+///
+/// `last_seen` 是调用方提供的「路径 → 最近一次显示时间」，与文件 mtime 取较晚者排序。
+/// 没有记录的路径退回 mtime，传空表时行为与纯 mtime 淘汰一致。键必须与扫描得到的路径
+/// 完全一致（同一缓存目录、同一拼写）；对不上只会静默退回 mtime，不会误删别的文件。
 fn trim_covers_with<F: Fn(&Path) -> bool>(
     dir: &Path,
     limit_bytes: u64,
+    last_seen: &HashMap<PathBuf, SystemTime>,
     remove: F,
 ) -> (u64, Vec<PathBuf>) {
     let mut files = Vec::new();
@@ -171,14 +176,18 @@ fn trim_covers_with<F: Fn(&Path) -> bool>(
         if is_fresh_part(&path, modified) {
             continue;
         }
+        let used_at = last_seen
+            .get(&path)
+            .copied()
+            .map_or(modified, |seen| modified.max(seen));
         let group = groups
             .entry(cover_group_key(&path))
-            .or_insert((modified, Vec::new()));
-        group.0 = group.0.max(modified);
+            .or_insert((used_at, Vec::new()));
+        group.0 = group.0.max(used_at);
         group.1.push((path, bytes));
     }
     let mut groups: Vec<_> = groups.into_iter().collect();
-    groups.sort_by_key(|(_, (modified, _))| *modified);
+    groups.sort_by_key(|(_, (used_at, _))| *used_at);
     let mut removed = Vec::new();
     for (_, (_, files)) in groups {
         if total <= limit_bytes {
@@ -194,17 +203,29 @@ fn trim_covers_with<F: Fn(&Path) -> bool>(
     (total, removed)
 }
 
-pub fn trim_covers_in(dir: &Path, limit_bytes: u64) -> (u64, Vec<PathBuf>) {
-    trim_covers_with(dir, limit_bytes, |path| std::fs::remove_file(path).is_ok())
+/// 按字节上限淘汰封面缓存目录，返回 `(剩余字节数, 实际删掉的路径)`。
+///
+/// `last_seen` 是调用方采样的「路径 → 最近显示时间」；没有记录的路径退回文件 mtime。
+pub fn trim_covers_in(
+    dir: &Path,
+    limit_bytes: u64,
+    last_seen: &HashMap<PathBuf, SystemTime>,
+) -> (u64, Vec<PathBuf>) {
+    trim_covers_with(dir, limit_bytes, last_seen, |path| {
+        std::fs::remove_file(path).is_ok()
+    })
 }
 
 /// 对封面缓存目录施加 MB 上限，返回这次实际删掉的文件路径。调用方必须在后台执行。
 ///
-/// 和 `trim_audio` 一样收 MB。返回删掉的路径，让界面只同步这几张封面的内存状态。
-pub fn trim_covers(limit_mb: u64) -> Vec<PathBuf> {
+/// 和 `trim_audio` 一样收 MB。`last_seen` 由调用方在渲染线程采样后传入，用来把最近
+/// 显示过的封面排到后面（与 mtime 取较晚者）；传空表则退回按 mtime 淘汰。
+/// 返回删掉的路径，让界面只同步这几张封面的内存状态。
+pub fn trim_covers(limit_mb: u64, last_seen: &HashMap<PathBuf, SystemTime>) -> Vec<PathBuf> {
     let (_, removed) = trim_covers_in(
         &crate::audio::cover_cache_dir(),
         limit_mb.saturating_mul(1024 * 1024),
+        last_seen,
     );
     removed
 }
@@ -955,14 +976,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let thumb = file(dir.path(), "covers/0000000000000001-160.img", 100);
         let original = file(dir.path(), "covers/original/0000000000000001.img", 100);
-        let (remaining, removed) = trim_covers_in(dir.path(), 1000);
+        let (remaining, removed) = trim_covers_in(dir.path(), 1000, &HashMap::new());
         assert_eq!(remaining, 20);
         assert!(removed.is_empty(), "没超限不该报任何删除");
         assert!(thumb.exists());
         assert!(original.exists());
     }
 
-    /// #217：超限时按组内最后访问时间排序，最旧那组的缩略图和原图一起删，不剩半套。
+    /// #217：超限时按组内最后使用时间排序，最旧那组的缩略图和原图一起删，不剩半套。
     #[test]
     fn trim_covers_evicts_oldest_group_as_a_whole() {
         let dir = tempfile::tempdir().unwrap();
@@ -971,7 +992,7 @@ mod tests {
         let new_thumb = file(dir.path(), "covers/0000000000000002-160.img", 0);
         let new_original = file(dir.path(), "covers/original/0000000000000002.img", 0);
 
-        let (remaining, removed) = trim_covers_in(dir.path(), 20);
+        let (remaining, removed) = trim_covers_in(dir.path(), 20, &HashMap::new());
         assert_eq!(remaining, 20);
         assert_eq!(removed.len(), 2, "整组两个文件都报出来");
         assert!(removed.contains(&old_thumb) && removed.contains(&old_original));
@@ -981,6 +1002,55 @@ mod tests {
             new_thumb.exists() && new_original.exists(),
             "最近看过的组要留住"
         );
+    }
+
+    /// #224：最近显示过、但 mtime 很旧的封面，要排在从没显示过的较新封面之后，
+    /// 整组（缩略图 + 原图）一起保住。
+    #[test]
+    fn trim_covers_prefers_last_shown_over_stale_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let shown_thumb = file(dir.path(), "covers/0000000000000001-160.img", 3600);
+        let shown_original = file(dir.path(), "covers/original/0000000000000001.img", 3600);
+        let never_shown = file(dir.path(), "covers/0000000000000002-160.img", 30);
+
+        let mut last_seen = HashMap::new();
+        last_seen.insert(
+            shown_thumb.clone(),
+            SystemTime::now() - Duration::from_secs(1),
+        );
+
+        let (remaining, removed) = trim_covers_in(dir.path(), 20, &last_seen);
+        assert_eq!(remaining, 20);
+        assert_eq!(removed, vec![never_shown.clone()], "只淘汰从没显示过的那组");
+        assert!(
+            shown_thumb.exists() && shown_original.exists(),
+            "最近显示的组，缩略图和原图都要留"
+        );
+        assert!(!never_shown.exists());
+    }
+
+    /// #224：显示之后又重新下载过的封面，mtime 比显示时间新，排序键必须取较晚的 mtime。
+    /// 若实现退化成「有 last_seen 就只看 last_seen」，这张会被当成最旧的一组删掉。
+    #[test]
+    fn trim_covers_keeps_redownloaded_cover_over_older_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let redownloaded = file(dir.path(), "covers/0000000000000001-160.img", 60);
+        let stale = file(dir.path(), "covers/0000000000000002-160.img", 3600);
+
+        let mut last_seen = HashMap::new();
+        last_seen.insert(
+            redownloaded.clone(),
+            SystemTime::now() - Duration::from_secs(7200),
+        );
+
+        let (remaining, removed) = trim_covers_in(dir.path(), 10, &last_seen);
+        assert_eq!(remaining, 10);
+        assert_eq!(removed, vec![stale.clone()], "旧 mtime 的那组先淘汰");
+        assert!(
+            redownloaded.exists(),
+            "重新下载后的 mtime 要能压过旧显示时间"
+        );
+        assert!(!stale.exists());
     }
 
     /// #217：24 小时内的临时文件计入总量但受保护；过期临时文件可以淘汰。
@@ -995,7 +1065,7 @@ mod tests {
         );
         let cover = file(dir.path(), "covers/0000000000000003-160.img", 50);
 
-        assert_eq!(trim_covers_in(dir.path(), 10).0, 10);
+        assert_eq!(trim_covers_in(dir.path(), 10, &HashMap::new()).0, 10);
         assert!(fresh.exists(), "24 小时内的临时文件不能删");
         assert!(!stale.exists(), "过期临时文件可删");
         assert!(!cover.exists(), "普通封面按顺序删");
@@ -1009,7 +1079,7 @@ mod tests {
         let recent = file(dir.path(), "covers/0000000000000002-160.img", 0);
         let attempts = std::cell::Cell::new(0);
 
-        let (remaining, removed) = trim_covers_with(dir.path(), 10, |path| {
+        let (remaining, removed) = trim_covers_with(dir.path(), 10, &HashMap::new(), |path| {
             attempts.set(attempts.get() + 1);
             if path == old.as_path() {
                 false // 模拟这个删不掉
@@ -1029,8 +1099,11 @@ mod tests {
     #[test]
     fn trim_covers_missing_or_empty_dir_returns_zero() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(trim_covers_in(&dir.path().join("missing"), 0).0, 0);
-        assert_eq!(trim_covers_in(dir.path(), 0).0, 0);
+        assert_eq!(
+            trim_covers_in(&dir.path().join("missing"), 0, &HashMap::new()).0,
+            0
+        );
+        assert_eq!(trim_covers_in(dir.path(), 0, &HashMap::new()).0, 0);
     }
 
     #[test]

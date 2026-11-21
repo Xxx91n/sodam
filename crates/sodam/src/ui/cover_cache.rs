@@ -126,7 +126,10 @@ fn artwork_frame(image: DynamicImage, edge: u32) -> RgbaImage {
 struct Cached {
     value: Result<Arc<RenderImage>, ImageCacheError>,
     bytes: usize,
+    /// 内存缓存 LRU 用的单调时钟；系统挂起期间可能不走。
     used: Instant,
+    /// 磁盘淘汰用的墙钟显示时间。与 `used` 分开存，挂起恢复后不会把旧记录“推新”。
+    shown_at: SystemTime,
 }
 
 /// 全局安装的封面缓存实体。
@@ -163,20 +166,12 @@ impl CoverImageCache {
 
     /// 最近显示时间快照：`路径 → 最后一次布局/绘制时见到的墙钟时间`。
     ///
-    /// `load_at` 在每次布局/绘制命中时把条目的 `used` 推到当前；这里把进程内单调时钟
-    /// 换算成可与文件 mtime 比较的 [`SystemTime`]。只在渲染线程只读采样，不加锁、不碰
-    /// 文件系统。同一路径可能因目标边长不同而有多条缓存，取其中最近的一次；解码失败的
-    /// 条目没画出来，不算显示。快照只覆盖仍在内存缓存里的封面，其余封面会退回 mtime。
+    /// `load_at` 在每次布局/绘制命中时记录墙钟时间；这里不做换算，直接导出，避免
+    /// `Instant` 在系统挂起期间停走导致旧记录被“推新”。只在渲染线程只读采样，不加锁、
+    /// 不碰文件系统。同一路径可能因目标边长不同而有多条缓存，取其中最近的一次；解码失败
+    /// 的条目没画出来，不算显示。快照只覆盖仍在内存缓存里的封面，其余封面会退回 mtime。
     pub fn last_shown_times(&self) -> HashMap<PathBuf, SystemTime> {
-        self.last_shown_times_with(Instant::now(), SystemTime::now())
-    }
-
-    fn last_shown_times_with(
-        &self,
-        now: Instant,
-        wall: SystemTime,
-    ) -> HashMap<PathBuf, SystemTime> {
-        let mut latest: HashMap<&Path, Instant> = HashMap::new();
+        let mut latest: HashMap<&Path, SystemTime> = HashMap::new();
         for ((resource, _edge), cached) in &self.items {
             if cached.value.is_err() {
                 continue;
@@ -185,16 +180,12 @@ impl CoverImageCache {
                 continue;
             };
             let path = path.as_ref();
-            let seen = latest.entry(path).or_insert(cached.used);
-            *seen = (*seen).max(cached.used);
+            let seen = latest.entry(path).or_insert(cached.shown_at);
+            *seen = (*seen).max(cached.shown_at);
         }
         latest
             .into_iter()
-            .filter_map(|(path, used)| {
-                // 系统时间异常时宁可丢掉这条记录，让 mtime 兜底，也不 panic。
-                wall.checked_sub(now.saturating_duration_since(used))
-                    .map(|shown| (path.to_path_buf(), shown))
-            })
+            .map(|(path, shown)| (path.to_path_buf(), shown))
             .collect()
     }
 
@@ -209,6 +200,7 @@ impl CoverImageCache {
         let key = (resource.clone(), edge);
         if let Some(cached) = self.items.get_mut(&key) {
             cached.used = Instant::now();
+            cached.shown_at = SystemTime::now();
             return Some(cached.value.clone());
         }
 
@@ -238,6 +230,7 @@ impl CoverImageCache {
                 value: value.clone(),
                 bytes,
                 used: Instant::now(),
+                shown_at: SystemTime::now(),
             },
         );
         self.bytes = self.bytes.saturating_add(bytes);
@@ -414,19 +407,28 @@ mod tests {
         let failed = PathBuf::from("/cache/covers/0001-160.img");
         let now = Instant::now();
         let wall = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
-        let entry = |value, used| Cached {
+        let entry = |value, used, shown_at| Cached {
             value,
             bytes: 0,
             used,
+            shown_at,
         };
 
         cache.items.insert(
             (Resource::from(path.clone()), 64),
-            entry(decoded_1x1(), now - Duration::from_secs(30)),
+            entry(
+                decoded_1x1(),
+                now - Duration::from_secs(30),
+                wall - Duration::from_secs(30),
+            ),
         );
         cache.items.insert(
             (Resource::from(path.clone()), 160),
-            entry(decoded_1x1(), now - Duration::from_secs(5)),
+            entry(
+                decoded_1x1(),
+                now - Duration::from_secs(5),
+                wall - Duration::from_secs(5),
+            ),
         );
         cache.items.insert(
             (Resource::from(failed.clone()), 64),
@@ -435,10 +437,11 @@ mod tests {
                     "decode failed",
                 )))),
                 now,
+                wall,
             ),
         );
 
-        let shown = cache.last_shown_times_with(now, wall);
+        let shown = cache.last_shown_times();
         assert_eq!(
             shown.get(&path),
             Some(&(wall - Duration::from_secs(5))),

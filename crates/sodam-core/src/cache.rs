@@ -152,8 +152,6 @@ pub const COVER_LIMIT_MB: u64 = 512;
 /// 从最久没看的组开始整组删，删到不超上限为止。删除成功才算释放，失败不中断。
 /// 返回删掉的路径，好让调用方只清理这些文件对应的内存映射，不必全表扫盘。
 /// 封面不建立租约，正在被读的文件若被系统拒绝删除，下次维护再试。
-///
-/// `last_seen` 是「文件路径 → 最近一次显示时间」；没有记录的路径按 mtime 排。
 fn trim_covers_with<F: Fn(&Path) -> bool>(
     dir: &Path,
     limit_bytes: u64,
@@ -202,8 +200,6 @@ fn trim_covers_with<F: Fn(&Path) -> bool>(
 }
 
 /// 按字节上限淘汰封面缓存目录，返回 `(剩余字节数, 实际删掉的路径)`。
-///
-/// `last_seen` 是调用方采样的「路径 → 最近显示时间」；没有记录的路径退回文件 mtime。
 pub fn trim_covers_in(
     dir: &Path,
     limit_bytes: u64,
@@ -216,8 +212,8 @@ pub fn trim_covers_in(
 
 /// 对封面缓存目录施加 MB 上限，返回这次实际删掉的文件路径。调用方必须在后台执行。
 ///
-/// 和 `trim_audio` 一样收 MB。`last_seen` 由调用方在渲染线程采样后传入，用来把最近
-/// 显示过的封面排到后面（与 mtime 取较晚者）；传空表则退回按 mtime 淘汰。
+/// 和 `trim_audio` 一样收 MB。`last_seen` 是「文件路径 → 最近一次显示时间」：有记录时
+/// 取 `max(mtime, 显示时间)`，没有记录时按 mtime；传空表则退回纯 mtime 淘汰。
 /// 返回删掉的路径，让界面只同步这几张封面的内存状态。
 pub fn trim_covers(limit_mb: u64, last_seen: &HashMap<PathBuf, SystemTime>) -> Vec<PathBuf> {
     let (_, removed) = trim_covers_in(
@@ -968,7 +964,7 @@ mod tests {
         assert_eq!(trim_audio_in(dir.path(), 0), 0);
     }
 
-    /// #217：没超上限一个都不删，统计口径含原图子目录里的文件。
+    /// 没超上限一个都不删，统计口径含原图子目录里的文件。
     #[test]
     fn trim_covers_below_limit_keeps_everything() {
         let dir = tempfile::tempdir().unwrap();
@@ -1051,7 +1047,7 @@ mod tests {
         assert!(!stale.exists());
     }
 
-    /// #217：24 小时内的临时文件计入总量但受保护；过期临时文件可以淘汰。
+    /// 24 小时内的临时文件计入总量但受保护；过期临时文件可以淘汰。
     #[test]
     fn trim_covers_protects_fresh_parts_and_evicts_stale_ones() {
         let dir = tempfile::tempdir().unwrap();
@@ -1069,7 +1065,7 @@ mod tests {
         assert!(!cover.exists(), "普通封面按顺序删");
     }
 
-    /// #217：删除失败的文件不减统计，也不挡着后面的组继续淘汰。
+    /// 删除失败的文件不减统计，也不挡着后面的组继续淘汰。
     #[test]
     fn trim_covers_delete_failure_does_not_count_or_stop() {
         let dir = tempfile::tempdir().unwrap();
@@ -1093,7 +1089,7 @@ mod tests {
         assert_eq!(attempts.get(), 2, "两组都要尝试过");
     }
 
-    /// #217：目录不存在或为空都返回 0，不 panic。
+    /// 目录不存在或为空都返回 0，不 panic。
     #[test]
     fn trim_covers_missing_or_empty_dir_returns_zero() {
         let dir = tempfile::tempdir().unwrap();
@@ -1826,7 +1822,7 @@ mod tests {
         names
     }
 
-    /// #216：本地还没有这张封面时，一次写成，写的就是刚拿到的字节。
+    /// 本地还没有这张封面时，一次写成，写的就是刚拿到的字节。
     #[test]
     fn atomic_write_creates_cache_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -1843,7 +1839,7 @@ mod tests {
         );
     }
 
-    /// #216：已经有旧封面时整份换掉，不能还留着上一版的长尾巴。
+    /// 已经有旧封面时整份换掉，不能还留着上一版的长尾巴。
     #[test]
     fn atomic_write_replaces_existing_cache_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -1860,7 +1856,7 @@ mod tests {
         assert!(stray_files(dir.path(), &["0000abcd-160.img"]).is_empty());
     }
 
-    /// #216：换不上正式文件时，目标原地不动，临时文件也不留下。
+    /// 换不上正式文件时，目标原地不动，临时文件也不留下。
     ///
     /// 用一个占着目标路径的目录来制造「换不动」：`rename` 到一个已有目录上会失败，
     /// 和生产上「目标文件被别的程序占着换不动」是同一类结果。

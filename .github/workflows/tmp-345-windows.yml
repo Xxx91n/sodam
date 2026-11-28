@@ -1,0 +1,82 @@
+name: Temp 345 Windows Acceptance Build
+
+# 临时验收用（仅存 fork 临时分支，不进上游）：
+# 并行跑完整检查（fmt + clippy + test）与 Windows x64 release 裸 exe / 安装包构建。
+on:
+  push:
+    branches:
+      - 'ci/tmp-345-windows'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-345-win-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-windows:
+    name: Windows x64 fmt + clippy + test
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace
+
+  build-windows:
+    name: Windows x64 release exe + installer
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked --workspace
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+        shell: pwsh
+
+      - name: Create Windows installer
+        shell: pwsh
+        run: |
+          $base = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' |
+            Select-Object -First 1).Matches.Groups[1].Value
+          $version = "$base-test.$env:GITHUB_RUN_NUMBER"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$version" `
+            packaging/windows/sodam.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = "release/sodam-$version-windows-x64-setup.exe"
+          if (-not (Test-Path $setup)) { throw "installer not found: $setup" }
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "$hash  $(Split-Path $setup -Leaf)" | Out-File -FilePath "$setup.sha256" -Encoding ascii
+          Get-ChildItem release | Format-Table Name, Length
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sodam-345-windows-x64-installer
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload portable binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sodam-345-windows-x64-exe
+          path: target/release/sodam.exe
+          if-no-files-found: error
+          retention-days: 7
